@@ -1,0 +1,217 @@
+{
+  "comment": "Single source of truth for the radar look and behaviour, shared by the firmware (tools/gen_radar.mjs emits firmware/dragonradar/radar_assets.h) and the web preview (tools/preview/build.mjs embeds it). Lengths are fractions of the screen radius R (R = 233 px on the 466x466 panel), so every renderer draws the same picture at any size. Times are in milliseconds, colours are #RRGGBB. Screen coordinates: origin at the centre, x to the right, y down, bearings clockwise from north. See docs/design.md for the sources and the reasoning behind each value.",
+  "version": 1,
+  "refSizePx": 466,
+
+  "theme": "z",
+  "themes": {
+    "z": {
+      "label": "Dragon Ball Z (Namek)",
+      "background": "#000000",
+      "screen": "#0c8a12",
+      "screenCenter": "#18a020",
+      "screenEdge": "#04620a",
+      "rim": "#012603",
+      "grid": "#004800",
+      "ballCore": "#fffbe5",
+      "ballDim": "#c9c98a",
+      "ballGlow": "#ecef88",
+      "marker": "#e80d07",
+      "markerEdge": "#5a0402",
+      "digits": "#fffeac",
+      "arrow": "#e80d07",
+      "text": "#d8f8c0",
+      "ping": "#b8f0a0",
+      "sheen": "#ffffff",
+      "counts": "all"
+    },
+    "classic": {
+      "label": "Dragon Ball (1986)",
+      "background": "#000000",
+      "screen": "#587048",
+      "screenCenter": "#627a50",
+      "screenEdge": "#3c5030",
+      "rim": "#1a2414",
+      "grid": "#829c75",
+      "ballCore": "#fde46e",
+      "ballDim": "#b89a50",
+      "ballGlow": "#e89848",
+      "marker": "#e80d07",
+      "markerEdge": "#5a0402",
+      "digits": "#fde46e",
+      "arrow": "#e89848",
+      "text": "#e8f0d8",
+      "ping": "#c8d8b0",
+      "sheen": "#ffffff",
+      "counts": "clusters"
+    },
+    "ptp": {
+      "label": "The Path to Power (1996)",
+      "background": "#000000",
+      "screen": "#00a878",
+      "screenCenter": "#10b888",
+      "screenEdge": "#007a55",
+      "rim": "#00301f",
+      "grid": "#006a4a",
+      "ballCore": "#fff4d0",
+      "ballDim": "#c0b090",
+      "ballGlow": "#f0d070",
+      "marker": "#e02020",
+      "markerEdge": "#500808",
+      "digits": "#fff4a0",
+      "arrow": "#e83030",
+      "text": "#d0fff0",
+      "ping": "#a0f0d0",
+      "sheen": "#ffffff",
+      "counts": "clusters"
+    }
+  },
+
+  "shading": {
+    "comment": "Screen fill: radial gradient screenCenter (at 0) -> screen (at midStop) -> screenEdge (at 1). A dark rim (theme.rim) of rimWidthR fades in towards the edge, where the green glass meets the casing. The sheen is a faint ellipse of glass reflection, upper left, as in the GT stills.",
+    "midStop": 0.55,
+    "rimWidthR": 0.035,
+    "sheen": { "enabled": true, "cxR": -0.32, "cyR": -0.48, "rxR": 0.52, "ryR": 0.26, "angleDeg": -28, "alpha": 0.07 }
+  },
+
+  "grid": {
+    "comment": "Square graticule fixed to the screen (it does not rotate with the heading, as in the anime). The centre of the screen sits in the middle of a cell (offsetCells 0.5), as in the Namek frames: about 9 cells across.",
+    "offsetCells": 0.5,
+    "rotateWithHeading": false
+  },
+
+  "zoom": {
+    "comment": "The top button zooms out one level (the anime: each press shows more of the planet) and wraps from the widest back to the closest. The grid pitch stays the same on screen; what changes is the real distance per cell. View radius = cellM / pitchR.",
+    "default": 1,
+    "wrap": true,
+    "levels": [
+      { "cellM": 10, "pitchR": 0.222, "lineWidthR": 0.014, "label": "10 m" },
+      { "cellM": 100, "pitchR": 0.222, "lineWidthR": 0.014, "label": "100 m" },
+      { "cellM": 1000, "pitchR": 0.222, "lineWidthR": 0.014, "label": "1 km" },
+      { "cellM": 10000, "pitchR": 0.222, "lineWidthR": 0.014, "label": "10 km" }
+    ]
+  },
+
+  "marker": {
+    "comment": "The user: a red isosceles triangle with its centroid on the screen centre, apex pointing up (the heading, since the map is heading-up).",
+    "heightR": 0.11,
+    "baseR": 0.12,
+    "edgeR": 0.008
+  },
+
+  "ball": {
+    "comment": "counts (per theme): all = every dot carries its ball count, as in the Z frames ('4', '1', '1'); clusters = only merged dots; none. Dots closer than mergeR on screen merge into one at their centroid. Glow alpha at distance d from the centre: glowAlpha * b * (1 - d / glowR)^glowFalloff, where b is the blink brightness (dimLevel..1). The core is a solid disc coloured mix(ballDim, ballCore, b).",
+    "coreR": 0.055,
+    "glowR": 0.14,
+    "glowAlpha": 0.9,
+    "glowFalloff": 1.3,
+    "visibleR": 0.9,
+    "mergeR": 0.08,
+    "digitHeightR": 0.075,
+    "digitStrokeR": 0.013,
+    "digitDxR": 0.075,
+    "digitDyR": -0.035
+  },
+
+  "arrow": {
+    "comment": "Balls beyond visibleR are shown as a triangle on the edge, pointing outwards along their bearing (the wiki: the radar 'points arrows in the directions of nearby Dragon Balls'; drawn like the red edge marks of The Path to Power). Same blink as the balls. Arrows less than mergeDeg apart are drawn once.",
+    "radiusR": 0.89,
+    "lengthR": 0.065,
+    "widthR": 0.07,
+    "mergeDeg": 6
+  },
+
+  "blink": {
+    "comment": "All dots flash together on every radar beep: brightness rises to 1 in riseMs, then decays exponentially (time constant decayMs) towards dimLevel. With the beep off (muted or no ball) they pulse every periodMs.",
+    "syncToBeep": true,
+    "riseMs": 30,
+    "decayMs": 380,
+    "dimLevel": 0.35,
+    "periodMs": 1000
+  },
+
+  "scaleLabel": {
+    "comment": "Adaptation (not in the anime): after a zoom change the cell size shows for a moment under the marker, drawn with the stroke font.",
+    "enabled": true,
+    "showMs": 1200,
+    "fadeMs": 400,
+    "yR": 0.6,
+    "heightR": 0.07,
+    "strokeR": 0.011
+  },
+
+  "transitions": {
+    "zoom": {
+      "comment": "On a zoom change the old grid scales by the zoom ratio while fading out, the new one fades in, and the dots slide (log-interpolated scale) to their new positions.",
+      "durationMs": 280,
+      "easing": "easeOutCubic"
+    },
+    "powerOff": {
+      "comment": "Dots go first, then the whole screen fades to AMOLED black.",
+      "durationMs": 450,
+      "ballsOutMs": 120,
+      "sfx": "power_off"
+    }
+  },
+
+  "boot": {
+    "comment": "Power-on timeline from black. screen: fades in with two dim flickers; grid: lines revealed from the centre outwards; marker: blinks in; ping: one ring expands to the edge (adaptation, a single first scan, not a rotating sweep); balls: fade in, then the beep starts. The power_on sound starts at 0 and its two pips land on markerFromMs and pingFromMs.",
+    "durationMs": 1500,
+    "sfx": "power_on",
+    "screenFromMs": 0,
+    "screenToMs": 240,
+    "flickerAtMs": [70, 150],
+    "flickerMs": 35,
+    "flickerLevel": 0.25,
+    "gridFromMs": 240,
+    "gridToMs": 700,
+    "markerFromMs": 700,
+    "markerToMs": 940,
+    "markerBlinks": 2,
+    "pingFromMs": 940,
+    "pingToMs": 1240,
+    "pingWidthR": 0.03,
+    "ballsFromMs": 1240,
+    "ballsToMs": 1500
+  },
+
+  "sweep": {
+    "comment": "No rotating sweep line: the Dragon Radar in the anime and manga never shows one. Kept here as an explicit off switch.",
+    "enabled": false
+  },
+
+  "font": {
+    "comment": "Stroke font for the cluster counts and the scale label. Each glyph is a list of polylines on a 4 x 6 box (x right, y down); advance is the horizontal step per glyph, both in box units.",
+    "boxW": 4,
+    "boxH": 6,
+    "advance": 5.6,
+    "glyphs": {
+      "0": [[[0, 0], [4, 0], [4, 6], [0, 6], [0, 0]]],
+      "1": [[[0.8, 1.2], [2.2, 0], [2.2, 6]], [[0.8, 6], [3.6, 6]]],
+      "2": [[[0, 0], [4, 0], [4, 3], [0, 3], [0, 6], [4, 6]]],
+      "3": [[[0, 0], [4, 0], [4, 6], [0, 6]], [[1, 3], [4, 3]]],
+      "4": [[[3, 6], [3, 0], [0, 4], [4, 4]]],
+      "5": [[[4, 0], [0, 0], [0, 3], [4, 3], [4, 6], [0, 6]]],
+      "6": [[[4, 0], [0, 0], [0, 6], [4, 6], [4, 3], [0, 3]]],
+      "7": [[[0, 0], [4, 0], [1.4, 6]]],
+      "8": [[[0, 0], [4, 0], [4, 6], [0, 6], [0, 0]], [[0, 3], [4, 3]]],
+      "9": [[[4, 3], [0, 3], [0, 0], [4, 0], [4, 6], [0, 6]]],
+      "k": [[[0, 0], [0, 6]], [[3.6, 2.4], [0, 4.6]], [[1.3, 3.8], [3.8, 6]]],
+      "m": [[[0, 6], [0, 2.4], [4, 2.4], [4, 6]], [[2, 2.4], [2, 6]]],
+      " ": []
+    }
+  },
+
+  "demo": {
+    "comment": "Seven sample balls for the preview and a firmware demo mode: bearing in degrees clockwise from north, distance in metres. Chosen so every zoom level shows something: at 10 m only ball 1 is on screen and the rest are edge arrows; at 100 m balls 1-3 show as separate dots; at 1 km balls 1-3 merge into a 3 and balls 5-6 into a 2; at 10 km balls 1-6 merge into a 6 at the centre and ball 7 appears.",
+    "balls": [
+      { "stars": 1, "bearingDeg": 40, "distanceM": 25 },
+      { "stars": 2, "bearingDeg": 300, "distanceM": 180 },
+      { "stars": 3, "bearingDeg": 310, "distanceM": 210 },
+      { "stars": 4, "bearingDeg": 120, "distanceM": 900 },
+      { "stars": 5, "bearingDeg": 200, "distanceM": 3200 },
+      { "stars": 6, "bearingDeg": 197, "distanceM": 3300 },
+      { "stars": 7, "bearingDeg": 75, "distanceM": 28000 }
+    ]
+  }
+}

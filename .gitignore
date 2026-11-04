@@ -1,0 +1,28 @@
+# Shared by every project on the common ESP32 base; only the block between the app markers
+# changes from one repo to another.
+
+# Build output (build/<board>), published binaries (dist/) and the local site (_site/).
+# The installer binaries are produced by CI on each tag; only the page and its manifests
+# live in the repo.
+build/
+dist/
+_site/
+*.bin
+*.elf
+*.map
+
+# Screen captures from make shot
+shot-*.png
+
+# MCP server dependencies
+mcp/node_modules/
+
+# Promotional material (reel source, renders, audio) stays out of the repo
+promo/
+
+# macOS
+.DS_Store
+
+# >>> app
+# Bring-up captures (make shot OUT=build/shots/...) and worker reports live under build/.
+# <<< app

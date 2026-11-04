@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dragon Radar preview</title>
+<!-- Visual reference for the firmware: draws the radar from shared/radar.json and plays
+     shared/sounds.json with WebAudio. The JSON blocks at the bottom are embedded by
+     tools/preview/build.mjs; edit the shared files, not these blocks.
+     URL parameters (used by tools/preview/render.mjs for the PNG stills):
+       shot=1      render one frozen frame, canvas only
+       zoom=N      zoom level index            heading=DEG   simulated gyro heading
+       theme=NAME  palette from radar.json     b=0..1        blink brightness of the dots
+       boot=MS     time since power-on (renders the boot animation at that moment)
+       zfrom=N&zp=0..1  zoom transition from level N to zoom, at progress zp
+       label=MS    time since the last zoom change (scale label), default: hidden
+       selftest=1  run the live state machine on a synthetic clock (see selftest()) -->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #0b0d0b; color: #cfd8cc;
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+         display: flex; align-items: center; justify-content: center; }
+  main { display: flex; gap: 40px; align-items: center; flex-wrap: wrap; justify-content: center; padding: 32px; }
+  /* Casing: the white disc with the knob on top (HTML decoration only; the panel shows the screen). */
+  #device { position: relative; width: 530px; height: 530px; border-radius: 50%; padding: 32px;
+            background: radial-gradient(circle at 35% 30%, #fbfbf7, #d9dbd3 60%, #a9aca2);
+            box-shadow: 0 18px 40px #000a, inset 0 -6px 12px #0003; margin-top: 46px; }
+  #knob { position: absolute; left: 50%; top: -46px; width: 74px; height: 58px; transform: translateX(-50%);
+          border: 0; border-radius: 14px 14px 6px 6px; cursor: pointer; padding: 0;
+          background: repeating-linear-gradient(90deg, #8d9088 0 4px, #c9cbc3 4px 8px); box-shadow: 0 4px 8px #0006; }
+  #knob:active { transform: translateX(-50%) translateY(4px); }
+  #radar { display: block; width: 466px; height: 466px; border-radius: 50%; clip-path: circle(50%); background: #000; }
+  #panel { width: 300px; display: grid; gap: 14px; }
+  h1 { font-size: 17px; margin: 0; color: #e9f3e4; font-weight: 600; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { background: #1d2a1d; color: #dbeed4; border: 1px solid #355335; border-radius: 6px; padding: 7px 11px; font: inherit; cursor: pointer; }
+  button:hover { background: #26392a; }
+  label { display: grid; gap: 4px; }
+  input[type=range], select { width: 100%; }
+  select { background: #1d2a1d; color: #dbeed4; border: 1px solid #355335; border-radius: 6px; padding: 5px; font: inherit; }
+  #readout { font: 12px/1.6 ui-monospace, Menlo, monospace; background: #121812; border: 1px solid #243424; border-radius: 6px; padding: 8px 10px; white-space: pre; }
+  .keys { font-size: 12px; color: #8fa08a; }
+  kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid #3a4a3a; border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+  body.shot { display: block; background: #000; }
+  body.shot main { display: block; padding: 0; }
+  body.shot #device { width: auto; height: auto; padding: 0; margin: 0; background: none; box-shadow: none; border-radius: 0; }
+  body.shot #knob, body.shot #panel { display: none; }
+  body.shot #radar { border-radius: 0; clip-path: none; }
+</style>
+</head>
+<body>
+<main>
+  <div id="device">
+    <button id="knob" title="Top button: zoom out (Space)" aria-label="Top button: zoom out"></button>
+    <canvas id="radar" width="466" height="466"></canvas>
+  </div>
+  <section id="panel">
+    <h1>Dragon Radar preview</h1>
+    <div class="row">
+      <button id="bZoomOut">Zoom out</button>
+      <button id="bZoomIn">Zoom in</button>
+      <button id="bPower">Power</button>
+      <button id="bBoot">Replay boot</button>
+    </div>
+    <label>Heading (gyro) <span id="headingVal">0°</span>
+      <input id="heading" type="range" min="0" max="359" value="0"></label>
+    <label>Walk towards the balls: distances × <span id="distVal">1</span>
+      <input id="dist" type="range" min="-200" max="100" value="0"></label>
+    <label>Volume <span id="volVal">60</span>
+      <input id="vol" type="range" min="0" max="100" value="60"></label>
+    <label>Theme <select id="theme"></select></label>
+    <div id="readout"></div>
+    <div class="keys"><kbd>Space</kbd>/<kbd>↑</kbd> zoom out · <kbd>↓</kbd> zoom in · <kbd>←</kbd><kbd>→</kbd> heading ·
+      <kbd>P</kbd> power · <kbd>B</kbd> boot · <kbd>T</kbd> theme · <kbd>M</kbd> mute. Sound starts after the first click or key.</div>
+  </section>
+</main>
+
+<script id="radar-json" type="application/json">
+{"comment":"Single source of truth for the radar look and behaviour, shared by the firmware (tools/gen_radar.mjs emits firmware/dragonradar/radar_assets.h) and the web preview (tools/preview/build.mjs embeds it). Lengths are fractions of the screen radius R (R = 233 px on the 466x466 panel), so every renderer draws the same picture at any size. Times are in milliseconds, colours are #RRGGBB. Screen coordinates: origin at the centre, x to the right, y down, bearings clockwise from north. See docs/design.md for the sources and the reasoning behind each value.","version":1,"refSizePx":466,"theme":"z","themes":{"z":{"label":"Dragon Ball Z (Namek)","background":"#000000","screen":"#0c8a12","screenCenter":"#18a020","screenEdge":"#04620a","rim":"#012603","grid":"#004800","ballCore":"#fffbe5","ballDim":"#c9c98a","ballGlow":"#ecef88","marker":"#e80d07","markerEdge":"#5a0402","digits":"#fffeac","arrow":"#e80d07","text":"#d8f8c0","ping":"#b8f0a0","sheen":"#ffffff","counts":"all"},"classic":{"label":"Dragon Ball (1986)","background":"#000000","screen":"#587048","screenCenter":"#627a50","screenEdge":"#3c5030","rim":"#1a2414","grid":"#829c75","ballCore":"#fde46e","ballDim":"#b89a50","ballGlow":"#e89848","marker":"#e80d07","markerEdge":"#5a0402","digits":"#fde46e","arrow":"#e89848","text":"#e8f0d8","ping":"#c8d8b0","sheen":"#ffffff","counts":"clusters"},"ptp":{"label":"The Path to Power (1996)","background":"#000000","screen":"#00a878","screenCenter":"#10b888","screenEdge":"#007a55","rim":"#00301f","grid":"#006a4a","ballCore":"#fff4d0","ballDim":"#c0b090","ballGlow":"#f0d070","marker":"#e02020","markerEdge":"#500808","digits":"#fff4a0","arrow":"#e83030","text":"#d0fff0","ping":"#a0f0d0","sheen":"#ffffff","counts":"clusters"}},"shading":{"comment":"Screen fill: radial gradient screenCenter (at 0) -> screen (at midStop) -> screenEdge (at 1). A dark rim (theme.rim) of rimWidthR fades in towards the edge, where the green glass meets the casing. The sheen is a faint ellipse of glass reflection, upper left, as in the GT stills.","midStop":0.55,"rimWidthR":0.035,"sheen":{"enabled":true,"cxR":-0.32,"cyR":-0.48,"rxR":0.52,"ryR":0.26,"angleDeg":-28,"alpha":0.07}},"grid":{"comment":"Square graticule fixed to the screen (it does not rotate with the heading, as in the anime). The centre of the screen sits in the middle of a cell (offsetCells 0.5), as in the Namek frames: about 9 cells across.","offsetCells":0.5,"rotateWithHeading":false},"zoom":{"comment":"The top button zooms out one level (the anime: each press shows more of the planet) and wraps from the widest back to the closest. The grid pitch stays the same on screen; what changes is the real distance per cell. View radius = cellM / pitchR.","default":1,"wrap":true,"levels":[{"cellM":10,"pitchR":0.222,"lineWidthR":0.014,"label":"10 m"},{"cellM":100,"pitchR":0.222,"lineWidthR":0.014,"label":"100 m"},{"cellM":1000,"pitchR":0.222,"lineWidthR":0.014,"label":"1 km"},{"cellM":10000,"pitchR":0.222,"lineWidthR":0.014,"label":"10 km"}]},"marker":{"comment":"The user: a red isosceles triangle with its centroid on the screen centre, apex pointing up (the heading, since the map is heading-up).","heightR":0.11,"baseR":0.12,"edgeR":0.008},"ball":{"comment":"counts (per theme): all = every dot carries its ball count, as in the Z frames ('4', '1', '1'); clusters = only merged dots; none. Dots closer than mergeR on screen merge into one at their centroid. Glow alpha at distance d from the centre: glowAlpha * b * (1 - d / glowR)^glowFalloff, where b is the blink brightness (dimLevel..1). The core is a solid disc coloured mix(ballDim, ballCore, b).","coreR":0.055,"glowR":0.14,"glowAlpha":0.9,"glowFalloff":1.3,"visibleR":0.9,"mergeR":0.08,"digitHeightR":0.075,"digitStrokeR":0.013,"digitDxR":0.075,"digitDyR":-0.035},"arrow":{"comment":"Balls beyond visibleR are shown as a triangle on the edge, pointing outwards along their bearing (the wiki: the radar 'points arrows in the directions of nearby Dragon Balls'; drawn like the red edge marks of The Path to Power). Same blink as the balls. Arrows less than mergeDeg apart are drawn once.","radiusR":0.89,"lengthR":0.065,"widthR":0.07,"mergeDeg":6},"blink":{"comment":"All dots flash together on every radar beep: brightness rises to 1 in riseMs, then decays exponentially (time constant decayMs) towards dimLevel. With the beep off (muted or no ball) they pulse every periodMs.","syncToBeep":true,"riseMs":30,"decayMs":380,"dimLevel":0.35,"periodMs":1000},"scaleLabel":{"comment":"Adaptation (not in the anime): after a zoom change the cell size shows for a moment under the marker, drawn with the stroke font.","enabled":true,"showMs":1200,"fadeMs":400,"yR":0.6,"heightR":0.07,"strokeR":0.011},"transitions":{"zoom":{"comment":"On a zoom change the old grid scales by the zoom ratio while fading out, the new one fades in, and the dots slide (log-interpolated scale) to their new positions.","durationMs":280,"easing":"easeOutCubic"},"powerOff":{"comment":"Dots go first, then the whole screen fades to AMOLED black.","durationMs":450,"ballsOutMs":120,"sfx":"power_off"}},"boot":{"comment":"Power-on timeline from black. screen: fades in with two dim flickers; grid: lines revealed from the centre outwards; marker: blinks in; ping: one ring expands to the edge (adaptation, a single first scan, not a rotating sweep); balls: fade in, then the beep starts. The power_on sound starts at 0 and its two pips land on markerFromMs and pingFromMs.","durationMs":1500,"sfx":"power_on","screenFromMs":0,"screenToMs":240,"flickerAtMs":[70,150],"flickerMs":35,"flickerLevel":0.25,"gridFromMs":240,"gridToMs":700,"markerFromMs":700,"markerToMs":940,"markerBlinks":2,"pingFromMs":940,"pingToMs":1240,"pingWidthR":0.03,"ballsFromMs":1240,"ballsToMs":1500},"sweep":{"comment":"No rotating sweep line: the Dragon Radar in the anime and manga never shows one. Kept here as an explicit off switch.","enabled":false},"font":{"comment":"Stroke font for the cluster counts and the scale label. Each glyph is a list of polylines on a 4 x 6 box (x right, y down); advance is the horizontal step per glyph, both in box units.","boxW":4,"boxH":6,"advance":5.6,"glyphs":{"0":[[[0,0],[4,0],[4,6],[0,6],[0,0]]],"1":[[[0.8,1.2],[2.2,0],[2.2,6]],[[0.8,6],[3.6,6]]],"2":[[[0,0],[4,0],[4,3],[0,3],[0,6],[4,6]]],"3":[[[0,0],[4,0],[4,6],[0,6]],[[1,3],[4,3]]],"4":[[[3,6],[3,0],[0,4],[4,4]]],"5":[[[4,0],[0,0],[0,3],[4,3],[4,6],[0,6]]],"6":[[[4,0],[0,0],[0,6],[4,6],[4,3],[0,3]]],"7":[[[0,0],[4,0],[1.4,6]]],"8":[[[0,0],[4,0],[4,6],[0,6],[0,0]],[[0,3],[4,3]]],"9":[[[4,3],[0,3],[0,0],[4,0],[4,6],[0,6]]],"k":[[[0,0],[0,6]],[[3.6,2.4],[0,4.6]],[[1.3,3.8],[3.8,6]]],"m":[[[0,6],[0,2.4],[4,2.4],[4,6]],[[2,2.4],[2,6]]]," ":[]}},"demo":{"comment":"Seven sample balls for the preview and a firmware demo mode: bearing in degrees clockwise from north, distance in metres. Chosen so every zoom level shows something: at 10 m only ball 1 is on screen and the rest are edge arrows; at 100 m balls 1-3 show as separate dots; at 1 km balls 1-3 merge into a 3 and balls 5-6 into a 2; at 10 km balls 1-6 merge into a 6 at the centre and ball 7 appears.","balls":[{"stars":1,"bearingDeg":40,"distanceM":25},{"stars":2,"bearingDeg":300,"distanceM":180},{"stars":3,"bearingDeg":310,"distanceM":210},{"stars":4,"bearingDeg":120,"distanceM":900},{"stars":5,"bearingDeg":200,"distanceM":3200},{"stars":6,"bearingDeg":197,"distanceM":3300},{"stars":7,"bearingDeg":75,"distanceM":28000}]}}
+</script>
+<script id="sounds-json" type="application/json">
+{"comment":"Sound catalogue of the radar. firmware/dragonradar/sounds.h is generated from this by the common tools/gen_sounds.mjs (each entry: name, tempo, notes in the melody format of sound.h: raw HZ:MS tones and R:MS rests, ~square / ~sine switches the waveform of the tones that follow). gain (0-100, percent of the user volume) and the beep block are read by tools/gen_radar.mjs (radar_assets.h), the preview and tools/preview/render_wav.mjs; the other fields are documentation. Reconstructed by ear from the anime's electronic 'pi' beeps; see docs/design.md.","synth":{"comment":"How every renderer plays a tone (matches the ES8311 synth of sound.cpp): naive square or sine, amplitude ramped over rampMs at each change, level = 0.915 x (volume / 100)^2 of full scale. Raw HZ:MS tones are legato (no gap between them).","sampleRate":24000,"rampMs":2,"levelAt100":0.915},"beep":{"comment":"The radar beep repeats while at least one ball is known. Its interval depends on the distance d (metres) of the nearest ball, on a log scale: t = clamp((log10(farM) - log10(d)) / (log10(farM) - log10(nearM)), 0, 1); interval = maxIntervalMs + (minIntervalMs - maxIntervalMs) x t^curvePow. The distance is absolute, so zooming does not change the rhythm. The dots flash on every beep (radar.json blink). Crossing closeM plays ball_close once and crossing foundM plays ball_found once; each re-arms when the distance grows past threshold x rearmFactor.","sfx":"radar_beep","nearM":3,"farM":10000,"minIntervalMs":120,"maxIntervalMs":1400,"curvePow":1,"closeM":30,"closeSfx":"ball_close","foundM":3,"foundSfx":"ball_found","rearmFactor":1.3},"sfx":[{"name":"power_on","tempo":120,"gain":80,"notes":"~square 600:20 700:20 800:20 900:20 1000:20 1100:20 1200:20 1300:20 1400:20 1500:20 1600:20 1700:20 R:460 ~sine 2400:45 R:195 2400:40 3200:90","es":"Encendido: barrido que sube mientras se enciende la pantalla, un pip cuando aparece el marcador y un pip doble con la onda de escaneo","en":"Power on: a rising sweep while the screen lights up, a pip when the marker appears and a double pip with the scan ring"},{"name":"radar_beep","tempo":120,"gain":70,"notes":"~sine 2400:55","es":"El pitido del radar; se repite más rápido cuanto más cerca está la esfera","en":"The radar beep; repeats faster the closer the nearest ball is"},{"name":"zoom_out","tempo":120,"gain":75,"notes":"~square 3600:5 R:12 ~sine 1900:35","es":"Botón de arriba: clic mecánico y un blip agudo al alejar la escala","en":"Top button: a mechanical click and a high blip when zooming out"},{"name":"zoom_in","tempo":120,"gain":75,"notes":"~square 3600:5 R:12 ~sine 1400:35","es":"Acercar la escala: el mismo clic con un blip más grave","en":"Zoom in: the same click with a lower blip"},{"name":"ball_close","tempo":120,"gain":80,"notes":"~sine 2400:45 R:35 2400:45 R:35 2400:45","es":"Una esfera entra a menos de 30 m: tres pips rápidos","en":"A ball comes within 30 m: three quick pips"},{"name":"ball_found","tempo":120,"gain":85,"notes":"~sine 1568:70 R:15 2093:70 R:15 2637:70 R:15 3136:180","es":"Esfera encontrada (a menos de 3 m): cuatro notas que suben","en":"Ball found (within 3 m): four rising notes"},{"name":"power_off","tempo":120,"gain":75,"notes":"~square 1800:20 1600:20 1400:20 1250:20 1100:20 950:25 800:25 650:30 500:40 380:60","es":"Apagado: barrido que baja mientras se apaga la pantalla","en":"Power off: a falling sweep while the screen goes dark"}]}
+</script>
+<script>
+'use strict';
+const RADAR = JSON.parse(document.getElementById('radar-json').textContent);
+const SOUNDS = JSON.parse(document.getElementById('sounds-json').textContent);
+const Q = new URLSearchParams(location.search);
+const SHOT = Q.has('shot');
+if (SHOT) document.body.classList.add('shot');
+
+const canvas = document.getElementById('radar');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, CX = W / 2, CY = W / 2, R = W / 2;
+const LEVELS = RADAR.zoom.levels;
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+const ramp = (t, a, b) => (b > a ? clamp01((t - a) / (b - a)) : t >= b ? 1 : 0);
+const easeOutCubic = (p) => 1 - Math.pow(1 - p, 3);
+const rad = (d) => (d * Math.PI) / 180;
+
+function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function rgba(h, a = 1) { const [r, g, b] = hexRgb(h); return `rgba(${r},${g},${b},${a})`; }
+function mix(h1, h2, t) {
+  const a = hexRgb(h1), b = hexRgb(h2);
+  return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(',')})`;
+}
+
+// ------------------------------------------------------------------ state
+const S = {
+  theme: Q.get('theme') && RADAR.themes[Q.get('theme')] ? Q.get('theme') : RADAR.theme,
+  zoom: Q.has('zoom') ? Math.max(0, Math.min(LEVELS.length - 1, +Q.get('zoom'))) : RADAR.zoom.default,
+  zoomFrom: null, zoomStart: 0,
+  heading: +(Q.get('heading') || 0),
+  distScale: 1,
+  power: 'on', bootStart: -1e9, offStart: 0,
+  blinkAt: -1e9, labelAt: -1e9, lastBeep: -1e9,
+  closeArmed: true, foundArmed: true,
+  volume: 60, muted: false,
+};
+const P = () => RADAR.themes[S.theme];
+
+// ------------------------------------------------------------------ geometry
+const scaleOf = (i) => LEVELS[i].pitchR / LEVELS[i].cellM;  // R units per metre
+
+function balls() {
+  return RADAR.demo.balls.map((b) => ({ ...b, d: b.distanceM * S.distScale }));
+}
+
+// Screen positions (R units) for a given scale; merges dots closer than mergeR.
+function layout(scale) {
+  const B = RADAR.ball, dots = [], arrows = [];
+  for (const b of balls().sort((a, c) => a.d - c.d)) {
+    const rel = rad(b.bearingDeg - S.heading), r = b.d * scale;
+    if (r > B.visibleR) {
+      const diff = (a) => Math.abs(((a - rel + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
+      if (!arrows.some((a) => diff(a) < rad(RADAR.arrow.mergeDeg))) arrows.push(rel);
+      continue;
+    }
+    const x = Math.sin(rel) * r, y = -Math.cos(rel) * r;
+    const near = dots.find((c) => Math.hypot(c.x - x, c.y - y) < B.mergeR);
+    if (near) { near.x = (near.x * near.n + x) / (near.n + 1); near.y = (near.y * near.n + y) / (near.n + 1); near.n++; }
+    else dots.push({ x, y, n: 1 });
+  }
+  return { dots, arrows };
+}
+
+function nearestM() { return Math.min(...balls().map((b) => b.d)); }
+
+function beepIntervalMs(d) {
+  const b = SOUNDS.beep, lf = Math.log10(b.farM), ln = Math.log10(b.nearM);
+  const t = clamp01((lf - Math.log10(Math.max(d, 1e-3))) / (lf - ln));
+  return Math.round(b.maxIntervalMs + (b.minIntervalMs - b.maxIntervalMs) * Math.pow(t, b.curvePow));
+}
+
+function blinkLevel(now) {
+  const k = RADAR.blink;
+  if (Q.has('b')) return clamp01(+Q.get('b'));
+  const e = now - S.blinkAt;
+  if (e < 0) return k.dimLevel;
+  if (e < k.riseMs) return k.dimLevel + (1 - k.dimLevel) * (e / k.riseMs);
+  return k.dimLevel + (1 - k.dimLevel) * Math.exp(-(e - k.riseMs) / k.decayMs);
+}
+
+// ------------------------------------------------------------------ drawing
+function drawScreen() {
+  const p = P(), sh = RADAR.shading;
+  const g = ctx.createRadialGradient(CX, CY, 0, CX, CY, R);
+  g.addColorStop(0, p.screenCenter); g.addColorStop(sh.midStop, p.screen); g.addColorStop(1, p.screenEdge);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, W);
+}
+
+function drawRim() {
+  const p = P(), w = RADAR.shading.rimWidthR;
+  const g = ctx.createRadialGradient(CX, CY, R * (1 - w * 2), CX, CY, R);
+  g.addColorStop(0, rgba(p.rim, 0)); g.addColorStop(0.5, rgba(p.rim, 0.55)); g.addColorStop(1, rgba(p.rim, 1));
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(CX, CY, R, 0, 2 * Math.PI); ctx.fill();
+}
+
+function drawSheen() {
+  const s = RADAR.shading.sheen;
+  if (!s.enabled) return;
+  ctx.save();
+  ctx.translate(CX + s.cxR * R, CY + s.cyR * R);
+  ctx.rotate(rad(s.angleDeg));
+  ctx.scale(1, s.ryR / s.rxR);
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, s.rxR * R);
+  g.addColorStop(0, rgba(P().sheen, s.alpha)); g.addColorStop(1, rgba(P().sheen, 0));
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, s.rxR * R, 0, 2 * Math.PI); ctx.fill();
+  ctx.restore();
+}
+
+// Square grid of the given pitch (R units), centre in the middle of a cell.
+function drawGrid(pitchR, lineWidthR, alpha) {
+  if (alpha <= 0.01 || pitchR < 0.015) return;
+  const pitch = pitchR * R, off = RADAR.grid.offsetCells * pitch;
+  ctx.save();
+  ctx.strokeStyle = rgba(P().grid, alpha);
+  ctx.lineWidth = Math.max(1, lineWidthR * R);
+  ctx.beginPath();
+  const n = Math.ceil(R / pitch) + 1;
+  for (let k = -n; k <= n; k++) {
+    const v = k * pitch + off;
+    if (Math.abs(v) > R) continue;
+    ctx.moveTo(CX + v, 0); ctx.lineTo(CX + v, W);
+    ctx.moveTo(0, CY + v); ctx.lineTo(W, CY + v);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawText(str, x, y, heightR, strokeR, color) {
+  const F = RADAR.font, s = (heightR * R) / F.boxH;
+  ctx.save();
+  ctx.strokeStyle = color; ctx.lineWidth = Math.max(1, strokeR * R); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  [...str].forEach((ch, i) => {
+    for (const stroke of F.glyphs[ch] || []) {
+      stroke.forEach(([gx, gy], j) => {
+        const px = x + (i * F.advance + gx) * s, py = y + gy * s;
+        j ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      });
+    }
+  });
+  ctx.stroke();
+  ctx.restore();
+}
+function textWidthR(str, heightR) {
+  const F = RADAR.font, s = heightR / F.boxH;
+  return ((str.length - 1) * F.advance + F.boxW) * s;
+}
+
+function drawDot(x, y, n, b, alpha) {
+  const B = RADAR.ball, p = P(), px = CX + x * R, py = CY + y * R;
+  // Glow: alpha = glowAlpha * b * (1 - d/glowR)^falloff
+  const g = ctx.createRadialGradient(px, py, 0, px, py, B.glowR * R);
+  for (let i = 0; i <= 8; i++) {
+    const t = i / 8;
+    g.addColorStop(t, rgba(p.ballGlow, alpha * B.glowAlpha * b * Math.pow(1 - t, B.glowFalloff)));
+  }
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(px, py, B.glowR * R, 0, 2 * Math.PI); ctx.fill();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = mix(p.ballDim, p.ballCore, b);
+  ctx.beginPath(); ctx.arc(px, py, B.coreR * R, 0, 2 * Math.PI); ctx.fill();
+  ctx.globalAlpha = 1;
+  if (p.counts === 'all' || (p.counts === 'clusters' && n > 1)) {
+    const h = B.digitHeightR;
+    drawText(String(n), px + B.digitDxR * R, py + (B.digitDyR - h / 2) * R, h, B.digitStrokeR, rgba(p.digits, alpha * (0.55 + 0.45 * b)));
+  }
+}
+
+function drawArrow(rel, b, alpha) {
+  const A = RADAR.arrow;
+  ctx.save();
+  ctx.translate(CX, CY); ctx.rotate(rel);
+  const r0 = (A.radiusR - A.lengthR / 2) * R, r1 = (A.radiusR + A.lengthR / 2) * R, w = (A.widthR / 2) * R;
+  ctx.fillStyle = rgba(P().arrow, alpha * (0.45 + 0.55 * b));
+  ctx.beginPath(); ctx.moveTo(0, -r1); ctx.lineTo(w, -r0); ctx.lineTo(-w, -r0); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function drawMarker(alpha) {
+  if (alpha <= 0) return;
+  const M = RADAR.marker, p = P(), h = M.heightR * R, w = (M.baseR / 2) * R;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.beginPath();
+  ctx.moveTo(CX, CY - (2 / 3) * h); ctx.lineTo(CX + w, CY + h / 3); ctx.lineTo(CX - w, CY + h / 3); ctx.closePath();
+  ctx.fillStyle = p.marker; ctx.fill();
+  ctx.lineWidth = Math.max(1, M.edgeR * R); ctx.lineJoin = 'round'; ctx.strokeStyle = p.markerEdge; ctx.stroke();
+  ctx.restore();
+}
+
+function drawScaleLabel(now) {
+  const L = RADAR.scaleLabel;
+  const e = Q.has('label') ? +Q.get('label') : now - S.labelAt;
+  if (!L.enabled || e < 0 || e > L.showMs + L.fadeMs) return;
+  const a = e < L.showMs ? 1 : 1 - (e - L.showMs) / L.fadeMs;
+  const str = LEVELS[S.zoom].label, wR = textWidthR(str, L.heightR);
+  drawText(str, CX - (wR / 2) * R, CY + (L.yR - L.heightR / 2) * R, L.heightR, L.strokeR, rgba(P().text, a));
+}
+
+function blackout(a) {  // darken the whole screen by a (0..1)
+  if (a <= 0) return;
+  ctx.fillStyle = `rgba(0,0,0,${Math.min(1, a)})`;
+  ctx.fillRect(0, 0, W, W);
+}
+
+// One frame. bootT: ms since power-on (null after boot); offT: ms since power-off (null when on).
+function frame(now, bootT, offT) {
+  const BT = RADAR.boot;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = P().background; ctx.fillRect(0, 0, W, W);
+  if (bootT !== null && bootT < BT.screenFromMs) return;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(CX, CY, R, 0, 2 * Math.PI); ctx.clip();
+
+  // Zoom transition: log-interpolated scale, old grid out and new grid in, both following the scale.
+  let scale = scaleOf(S.zoom), grids = [[LEVELS[S.zoom], 1, 1]];
+  const zp = Q.has('zp') ? clamp01(+Q.get('zp')) : S.zoomFrom !== null ? clamp01((now - S.zoomStart) / RADAR.transitions.zoom.durationMs) : 1;
+  const from = Q.has('zfrom') ? +Q.get('zfrom') : S.zoomFrom;
+  if (from !== null && zp < 1) {
+    const p = easeOutCubic(zp), sF = scaleOf(from), sT = scaleOf(S.zoom);
+    scale = Math.exp(Math.log(sF) + (Math.log(sT) - Math.log(sF)) * p);
+    grids = [[LEVELS[from], scale / sF, 1 - p], [LEVELS[S.zoom], scale / sT, p]];
+  } else if (!Q.has('zp')) S.zoomFrom = null;
+
+  drawScreen();
+  // Boot: grid revealed from the centre outwards.
+  const gridR = bootT === null ? 1.5 : ramp(bootT, BT.gridFromMs, BT.gridToMs) * 1.02;
+  if (gridR > 0) {
+    ctx.save();
+    if (gridR < 1.5) { ctx.beginPath(); ctx.arc(CX, CY, gridR * R, 0, 2 * Math.PI); ctx.clip(); }
+    for (const [lvl, k, a] of grids) drawGrid(lvl.pitchR * k, lvl.lineWidthR, a);
+    ctx.restore();
+  }
+  drawSheen();
+
+  // Balls and edge arrows.
+  let ballsA = 1;
+  if (bootT !== null) ballsA = ramp(bootT, BT.ballsFromMs, BT.ballsToMs);
+  if (offT !== null) ballsA = 1 - ramp(offT, 0, RADAR.transitions.powerOff.ballsOutMs);
+  if (ballsA > 0) {
+    const b = blinkLevel(now), { dots, arrows } = layout(scale);
+    for (const rel of arrows) drawArrow(rel, b, ballsA);
+    for (const d of dots) drawDot(d.x, d.y, d.n, b, ballsA);
+  }
+
+  // Marker: blinks in during boot.
+  let markerA = 1;
+  if (bootT !== null) {
+    if (bootT < BT.markerFromMs) markerA = 0;
+    else if (bootT < BT.markerToMs) {
+      const slot = (BT.markerToMs - BT.markerFromMs) / (2 * BT.markerBlinks);
+      markerA = Math.floor((bootT - BT.markerFromMs) / slot) % 2 === 0 ? 1 : 0;
+    }
+  }
+  drawMarker(markerA);
+
+  // Boot: one scan ring from the centre to the edge.
+  if (bootT !== null && bootT >= BT.pingFromMs && bootT < BT.pingToMs) {
+    const p = ramp(bootT, BT.pingFromMs, BT.pingToMs);
+    ctx.strokeStyle = rgba(P().ping, 0.85 * (1 - p));
+    ctx.lineWidth = BT.pingWidthR * R;
+    ctx.beginPath(); ctx.arc(CX, CY, Math.max(1, p * R), 0, 2 * Math.PI); ctx.stroke();
+  }
+  if (bootT === null && offT === null) drawScaleLabel(now);
+  drawRim();
+
+  // Screen fade-in with flickers (boot) or fade-out (power off).
+  if (bootT !== null) {
+    let a = ramp(bootT, BT.screenFromMs, BT.screenToMs);
+    for (const f of BT.flickerAtMs) if (bootT >= f && bootT < f + BT.flickerMs) a *= BT.flickerLevel;
+    blackout(1 - a);
+  }
+  if (offT !== null) {
+    const O = RADAR.transitions.powerOff;
+    blackout(ramp(offT, O.ballsOutMs, O.durationMs));
+  }
+  ctx.restore();
+}
+
+// ------------------------------------------------------------------ sound (WebAudio)
+let AC = null, active = [];
+function audio() {
+  if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch { AC = null; } }
+  if (AC && AC.state === 'suspended') AC.resume();
+  return AC;
+}
+function parseNotes(notes) {
+  const out = []; let wave = 'square';
+  for (const tok of notes.trim().split(/[\s,|]+/)) {
+    if (tok[0] === '~') { wave = tok.slice(1); continue; }
+    const m = /^(R|r|\d+):(\d+)$/.exec(tok);
+    if (m) out.push({ hz: /r/i.test(m[1]) ? 0 : +m[1], ms: +m[2], wave });
+  }
+  return out;
+}
+// Same model as sound.cpp: an effect replaces the one playing; level = levelAt100 x (vol/100)^2.
+function playSfx(name) {
+  const s = SOUNDS.sfx.find((x) => x.name === name);
+  if (!s || S.muted || SHOT || !AC) return;
+  for (const o of active) { try { o.stop(); } catch {} }
+  active = [];
+  const vol = (S.volume * s.gain) / 100, level = SOUNDS.synth.levelAt100 * (vol / 100) ** 2;
+  if (level <= 0) return;
+  const ramp = SOUNDS.synth.rampMs / 1000;
+  let t = AC.currentTime + 0.005;
+  for (const tone of parseNotes(s.notes)) {
+    const d = tone.ms / 1000;
+    if (tone.hz) {
+      const o = AC.createOscillator(), g = AC.createGain();
+      o.type = tone.wave; o.frequency.value = tone.hz;
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(level, t + ramp);
+      g.gain.setValueAtTime(level, t + Math.max(ramp, d - ramp)); g.gain.linearRampToValueAtTime(0, t + d);
+      o.connect(g).connect(AC.destination); o.start(t); o.stop(t + d + 0.01);
+      active.push(o);
+    }
+    t += d;
+  }
+}
+
+// ------------------------------------------------------------------ behaviour
+function zoomTo(i, sfx, now = performance.now()) {
+  if (S.power !== 'on' || i === S.zoom) return;
+  S.zoomFrom = S.zoom; S.zoom = i; S.zoomStart = now; S.labelAt = now;
+  playSfx(sfx);
+}
+function zoomOut(now) {  // the top button: one level wider, wrapping back to the closest
+  const n = LEVELS.length;
+  if (S.zoom < n - 1) zoomTo(S.zoom + 1, 'zoom_out', now);
+  else if (RADAR.zoom.wrap) zoomTo(0, 'zoom_in', now);
+}
+function zoomIn() { if (S.zoom > 0) zoomTo(S.zoom - 1, 'zoom_in'); }
+function boot(now = performance.now()) {
+  S.power = 'boot'; S.bootStart = now; S.zoomFrom = null;
+  S.closeArmed = S.foundArmed = true; S.lastBeep = -1e9;
+  playSfx(RADAR.boot.sfx);
+}
+function powerToggle() {
+  if (S.power === 'off') return boot();
+  if (S.power === 'on' || S.power === 'boot') { S.power = 'powering_off'; S.offStart = performance.now(); playSfx(RADAR.transitions.powerOff.sfx); }
+}
+
+function step(now) {
+  let bootT = null, offT = null;
+  if (S.power === 'boot') {
+    bootT = now - S.bootStart;
+    if (bootT >= RADAR.boot.durationMs) { S.power = 'on'; bootT = null; }
+  }
+  if (S.power === 'powering_off') {
+    offT = now - S.offStart;
+    if (offT >= RADAR.transitions.powerOff.durationMs) S.power = 'off';
+  }
+  if (S.power === 'on') {
+    const d = nearestM(), B = SOUNDS.beep, iv = beepIntervalMs(d);
+    let sfx = null;
+    if (S.foundArmed && d <= B.foundM) { S.foundArmed = false; S.closeArmed = false; sfx = B.foundSfx; }
+    else if (S.closeArmed && d <= B.closeM) { S.closeArmed = false; sfx = B.closeSfx; }
+    if (d > B.foundM * B.rearmFactor) S.foundArmed = true;
+    if (d > B.closeM * B.rearmFactor) S.closeArmed = true;
+    if (sfx) { playSfx(sfx); S.lastBeep = now; S.blinkAt = now; }
+    else if (now - S.lastBeep >= iv) { S.lastBeep = now; S.blinkAt = now; playSfx(B.sfx); }
+    readout(d, iv);
+  }
+  if (S.power === 'off') {
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, W);
+  } else frame(now, bootT, offT);
+}
+function tick(now) { step(now); requestAnimationFrame(tick); }
+
+// ?selftest: runs the live state machine on a synthetic clock (boot at 0, top button at 2000 ms,
+// final frame at 2100 ms) so a one-shot headless screenshot can check it without real frames.
+function selftest() {
+  boot(0);
+  for (let t = 0; t <= 2100; t += 10) { if (t === 2000) zoomOut(t); step(t); }
+  document.title = `selftest power=${S.power} zoom=${S.zoom} beeps=${S.lastBeep > 0}`;
+}
+
+function fmtM(m) { return m >= 1000 ? (m / 1000).toFixed(m >= 10000 ? 0 : 1) + ' km' : Math.round(m) + ' m'; }
+let lastReadout = '';
+function readout(d, iv) {
+  const L = LEVELS[S.zoom], txt =
+    `zoom      ${S.zoom + 1}/${LEVELS.length}  ${L.label} per cell\n` +
+    `view      radius ${fmtM(L.cellM / L.pitchR)}\n` +
+    `nearest   ${fmtM(d)}\n` +
+    `beep      every ${iv} ms${S.muted ? ' (muted)' : ''}\n` +
+    `heading   ${S.heading}°`;
+  if (txt !== lastReadout) document.getElementById('readout').textContent = lastReadout = txt;
+}
+
+// ------------------------------------------------------------------ start
+if (SHOT) {
+  const bootT = Q.has('boot') ? +Q.get('boot') : null;
+  S.blinkAt = -1e9;
+  frame(0, bootT, null);
+  document.title = 'ready';
+} else {
+  const sel = document.getElementById('theme');
+  for (const [k, t] of Object.entries(RADAR.themes)) sel.add(new Option(t.label, k, false, k === S.theme));
+  sel.onchange = () => { S.theme = sel.value; };
+  const hd = document.getElementById('heading');
+  const setHeading = (v) => { S.heading = ((Math.round(v) % 360) + 360) % 360; hd.value = S.heading; document.getElementById('headingVal').textContent = S.heading + '°'; };
+  hd.oninput = () => setHeading(+hd.value);
+  const ds = document.getElementById('dist');
+  ds.oninput = () => { S.distScale = Math.pow(10, ds.value / 100); document.getElementById('distVal').textContent = S.distScale.toPrecision(2); };
+  const vl = document.getElementById('vol');
+  vl.oninput = () => { S.volume = +vl.value; document.getElementById('volVal').textContent = vl.value; };
+  const first = () => { audio(); };
+  document.addEventListener('pointerdown', first, { capture: true });
+  document.getElementById('knob').onclick = () => zoomOut();
+  document.getElementById('bZoomOut').onclick = () => zoomOut();
+  document.getElementById('bZoomIn').onclick = () => zoomIn();
+  document.getElementById('bPower').onclick = powerToggle;
+  document.getElementById('bBoot').onclick = () => { audio(); boot(); };
+  canvas.onclick = () => zoomOut();
+  document.addEventListener('keydown', (e) => {
+    audio();
+    if (e.target.tagName === 'SELECT') return;
+    const k = e.key.toLowerCase();
+    if (k === ' ' || k === 'arrowup') { e.preventDefault(); zoomOut(); }
+    else if (k === 'arrowdown') { e.preventDefault(); zoomIn(); }
+    else if (k === 'arrowleft') setHeading(S.heading - 5);
+    else if (k === 'arrowright') setHeading(S.heading + 5);
+    else if (k === 'p') powerToggle();
+    else if (k === 'b') boot();
+    else if (k === 'm') S.muted = !S.muted;
+    else if (k === 't') { const ks = Object.keys(RADAR.themes); S.theme = ks[(ks.indexOf(S.theme) + 1) % ks.length]; sel.value = S.theme; }
+  });
+  if (Q.has('selftest')) selftest();
+  else { boot(); requestAnimationFrame(tick); }
+}
+</script>
+</body>
+</html>
