@@ -23,7 +23,8 @@
       "text": "#d8f8c0",
       "ping": "#b8f0a0",
       "sheen": "#ffffff",
-      "counts": "all"
+      "counts": "stars",
+      "sweep": "#b8f0a0"
     },
     "classic": {
       "label": "Dragon Ball (1986)",
@@ -43,7 +44,8 @@
       "text": "#e8f0d8",
       "ping": "#c8d8b0",
       "sheen": "#ffffff",
-      "counts": "clusters"
+      "counts": "stars",
+      "sweep": "#e8f0d8"
     },
     "ptp": {
       "label": "The Path to Power (1996)",
@@ -63,7 +65,8 @@
       "text": "#d0fff0",
       "ping": "#a0f0d0",
       "sheen": "#ffffff",
-      "counts": "clusters"
+      "counts": "stars",
+      "sweep": "#a0f0d0"
     }
   },
 
@@ -81,7 +84,7 @@
   },
 
   "zoom": {
-    "comment": "The top button zooms out one level (the anime: each press shows more of the planet) and wraps from the widest back to the closest. The grid pitch stays the same on screen; what changes is the real distance per cell. View radius = cellM / pitchR.",
+    "comment": "The top button zooms out one level (the anime: each press shows more of the planet) and wraps from the widest back to the closest; the bottom one zooms in and wraps from the closest to the widest. The grid pitch stays the same on screen; what changes is the real distance per cell. View radius = cellM / pitchR.",
     "default": 1,
     "wrap": true,
     "levels": [
@@ -100,13 +103,14 @@
   },
 
   "ball": {
-    "comment": "counts (per theme): all = every dot carries its ball count, as in the Z frames ('4', '1', '1'); clusters = only merged dots; none. Dots closer than mergeR on screen merge into one at their centroid. Glow alpha at distance d from the centre: glowAlpha * b * (1 - d / glowR)^glowFalloff, where b is the blink brightness (dimLevel..1). The core is a solid disc coloured mix(ballDim, ballCore, b).",
+    "comment": "counts (per theme): stars = every dot carries the star number of its ball (1-7, unique); a group shows the stars of its nearest ball, next to its rightmost sphere; none = no digits. Dots closer than mergeR on screen form a group at their centroid, drawn as a little cluster of as many spheres as balls (as in the anime): 2 side by side, 3-6 on a ring (point up when odd, flat top when even), 7 a ring of six around one, with clusterSpacingR between neighbouring centres. Glow alpha at distance d from the centre: glowAlpha * b * (1 - d / glowR)^glowFalloff, where b is the blink brightness (dimLevel..1). The core is a solid disc coloured mix(ballDim, ballCore, b).",
     "coreR": 0.055,
     "glowR": 0.14,
     "glowAlpha": 0.9,
     "glowFalloff": 1.3,
     "visibleR": 0.9,
-    "mergeR": 0.08,
+    "mergeR": 0.12,
+    "clusterSpacingR": 0.11,
     "digitHeightR": 0.075,
     "digitStrokeR": 0.013,
     "digitDxR": 0.075,
@@ -176,8 +180,12 @@
   },
 
   "sweep": {
-    "comment": "No rotating sweep line: the Dragon Radar in the anime and manga never shows one. Kept here as an explicit off switch.",
-    "enabled": false
+    "comment": "Scan effect, chosen by the user against the strict reading of the sources. mode: line = a hand that turns clockwise once every periodMs with a fading trail of trailDeg behind it (theme.sweep colour); dots flash as the hand crosses them when dotFlash is on. ring = a ring that grows from the centre to maxR over durationMs on every radar beep (syncToBeep). both = line and ring; none = no scan, only the beep blink. The preview offers the four so the user can pick one; mode is the default.",
+    "enabled": true,
+    "mode": "line",
+    "modes": ["line", "ring", "both", "none"],
+    "line": { "periodMs": 2400, "trailDeg": 75, "alpha": 0.55, "trailAlpha": 0.28, "lineWidthR": 0.012, "dotFlash": true },
+    "ring": { "syncToBeep": true, "durationMs": 520, "widthR": 0.025, "alpha": 0.6, "maxR": 1.0 }
   },
 
   "font": {

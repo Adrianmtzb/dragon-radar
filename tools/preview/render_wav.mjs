@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Renders every sound of shared/sounds.json to build/sounds/<name>.wav for listening, plus three
 // radar-beep loops (far, mid, near) that show how the interval follows the distance. The synth
-// mirrors the ES8311 path of sound.cpp: naive square or sine, phase-continuous, amplitude ramped
+// mirrors the ES8311 path of sound.cpp: naive square, sine or triangle, phase-continuous, amplitude ramped
 // over synth.rampMs, level = synth.levelAt100 x (volume / 100)^2, volume = gain at user volume 100.
 // Usage: node tools/preview/render_wav.mjs
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -14,18 +14,25 @@ const { sampleRate: RATE, rampMs, levelAt100 } = sounds.synth;
 const outDir = join(root, 'build/sounds');
 mkdirSync(outDir, { recursive: true });
 
-// Raw-tone subset of the melody format: ~square | ~sine, HZ:MS, R:MS.
+// Naive waveforms of one period, phase 0..1 -> -1..1 (no band limiting, like the board's synth).
+const WAVES = {
+  square: (p) => (p < 0.5 ? 1 : -1),
+  sine: (p) => Math.sin(2 * Math.PI * p),
+  tri: (p) => 1 - 4 * Math.abs(p - 0.5),
+};
+
+// Raw-tone subset of the melody format: ~square | ~sine | ~tri, HZ:MS, R:MS.
 export function parseNotes(notes) {
   const out = [];
   let wave = 'square';
   for (const tok of notes.trim().split(/[\s,|]+/)) {
     if (tok.startsWith('~')) {
       wave = tok.slice(1);
-      if (wave !== 'square' && wave !== 'sine') throw new Error(`bad waveform ${tok}`);
+      if (!WAVES[wave]) throw new Error(`bad waveform ${tok}`);
       continue;
     }
     const m = /^(R|r|\d+):(\d+)$/.exec(tok);
-    if (!m) throw new Error(`unsupported token "${tok}" (use HZ:MS, R:MS, ~square, ~sine)`);
+    if (!m) throw new Error(`unsupported token "${tok}" (use HZ:MS, R:MS, ~square, ~sine, ~tri)`);
     out.push({ hz: /r/i.test(m[1]) ? 0 : +m[1], ms: +m[2], wave });
   }
   return out;
@@ -62,7 +69,7 @@ function render(events, totalMs) {
     if (active && active.hz) { hz = active.hz; wave = active.wave; }  // a rest keeps the last pitch while it fades
     amp = amp < target ? Math.min(target, amp + step) : Math.max(target, amp - step);
     phase = (phase + hz / RATE) % 1;
-    buf[i] = (wave === 'sine' ? Math.sin(2 * Math.PI * phase) : phase < 0.5 ? 1 : -1) * amp;
+    buf[i] = WAVES[wave](phase) * amp;
   }
   return buf;
 }

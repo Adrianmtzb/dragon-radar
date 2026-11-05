@@ -25,6 +25,7 @@ struct RadarPalette {
   uint16_t text;
   uint16_t ping;
   uint16_t sheen;
+  uint16_t sweep;
   uint32_t background888;
   uint32_t screen888;
   uint32_t screenCenter888;
@@ -41,10 +42,13 @@ struct RadarPalette {
   uint32_t text888;
   uint32_t ping888;
   uint32_t sheen888;
+  uint32_t sweep888;
   uint8_t counts;  // RadarCounts: which dots carry a ball count
 };
 
-enum RadarCounts : uint8_t { RADAR_COUNTS_NONE, RADAR_COUNTS_CLUSTERS, RADAR_COUNTS_ALL };
+// stars: each dot shows the star number of its (nearest) ball; all: the ball count of every dot;
+// clusters: the count of merged dots only; none: no digits.
+enum RadarCounts : uint8_t { RADAR_COUNTS_NONE, RADAR_COUNTS_CLUSTERS, RADAR_COUNTS_ALL, RADAR_COUNTS_STARS };
 
 enum RadarThemeId : uint8_t {
   RADAR_THEME_Z,
@@ -56,17 +60,17 @@ enum RadarThemeId : uint8_t {
 
 static const RadarPalette RADAR_THEMES[RADAR_THEME_COUNT] = {
     {"z", "Dragon Ball Z (Namek)",
-     0x0000, 0x0C42, 0x1D04, 0x0301, 0x0120, 0x0240, 0xFFDC, 0xCE51, 0xEF71, 0xE860, 0x5820, 0xFFF5, 0xE860, 0xDFD8, 0xBF94, 0xFFFF,
-     0x000000, 0x0C8A12, 0x18A020, 0x04620A, 0x012603, 0x004800, 0xFFFBE5, 0xC9C98A, 0xECEF88, 0xE80D07, 0x5A0402, 0xFFFEAC, 0xE80D07, 0xD8F8C0, 0xB8F0A0, 0xFFFFFF,
-     RADAR_COUNTS_ALL},
+     0x0000, 0x0C42, 0x1D04, 0x0301, 0x0120, 0x0240, 0xFFDC, 0xCE51, 0xEF71, 0xE860, 0x5820, 0xFFF5, 0xE860, 0xDFD8, 0xBF94, 0xFFFF, 0xBF94,
+     0x000000, 0x0C8A12, 0x18A020, 0x04620A, 0x012603, 0x004800, 0xFFFBE5, 0xC9C98A, 0xECEF88, 0xE80D07, 0x5A0402, 0xFFFEAC, 0xE80D07, 0xD8F8C0, 0xB8F0A0, 0xFFFFFF, 0xB8F0A0,
+     RADAR_COUNTS_STARS},
     {"classic", "Dragon Ball (1986)",
-     0x0000, 0x5B89, 0x63CA, 0x3A86, 0x1922, 0x84EE, 0xFF2D, 0xBCCA, 0xECC9, 0xE860, 0x5820, 0xFF2D, 0xECC9, 0xEF9B, 0xCED6, 0xFFFF,
-     0x000000, 0x587048, 0x627A50, 0x3C5030, 0x1A2414, 0x829C75, 0xFDE46E, 0xB89A50, 0xE89848, 0xE80D07, 0x5A0402, 0xFDE46E, 0xE89848, 0xE8F0D8, 0xC8D8B0, 0xFFFFFF,
-     RADAR_COUNTS_CLUSTERS},
+     0x0000, 0x5B89, 0x63CA, 0x3A86, 0x1922, 0x84EE, 0xFF2D, 0xBCCA, 0xECC9, 0xE860, 0x5820, 0xFF2D, 0xECC9, 0xEF9B, 0xCED6, 0xFFFF, 0xEF9B,
+     0x000000, 0x587048, 0x627A50, 0x3C5030, 0x1A2414, 0x829C75, 0xFDE46E, 0xB89A50, 0xE89848, 0xE80D07, 0x5A0402, 0xFDE46E, 0xE89848, 0xE8F0D8, 0xC8D8B0, 0xFFFFFF, 0xE8F0D8,
+     RADAR_COUNTS_STARS},
     {"ptp", "The Path to Power (1996)",
-     0x0000, 0x054F, 0x15D1, 0x03CA, 0x0183, 0x0349, 0xFFBA, 0xC592, 0xF68E, 0xE104, 0x5041, 0xFFB4, 0xE986, 0xD7FE, 0xA79A, 0xFFFF,
-     0x000000, 0x00A878, 0x10B888, 0x007A55, 0x00301F, 0x006A4A, 0xFFF4D0, 0xC0B090, 0xF0D070, 0xE02020, 0x500808, 0xFFF4A0, 0xE83030, 0xD0FFF0, 0xA0F0D0, 0xFFFFFF,
-     RADAR_COUNTS_CLUSTERS},
+     0x0000, 0x054F, 0x15D1, 0x03CA, 0x0183, 0x0349, 0xFFBA, 0xC592, 0xF68E, 0xE104, 0x5041, 0xFFB4, 0xE986, 0xD7FE, 0xA79A, 0xFFFF, 0xA79A,
+     0x000000, 0x00A878, 0x10B888, 0x007A55, 0x00301F, 0x006A4A, 0xFFF4D0, 0xC0B090, 0xF0D070, 0xE02020, 0x500808, 0xFFF4A0, 0xE83030, 0xD0FFF0, 0xA0F0D0, 0xFFFFFF, 0xA0F0D0,
+     RADAR_COUNTS_STARS},
 };
 
 // ---- screen shading
@@ -110,7 +114,8 @@ static constexpr float RADAR_BALL_GLOW_R = 0.14f;
 static constexpr float RADAR_BALL_GLOW_ALPHA = 0.9f;
 static constexpr float RADAR_BALL_GLOW_FALLOFF = 1.3f;
 static constexpr float RADAR_BALL_VISIBLE_R = 0.9f;
-static constexpr float RADAR_BALL_MERGE_R = 0.08f;
+static constexpr float RADAR_BALL_MERGE_R = 0.12f;
+static constexpr float RADAR_BALL_CLUSTER_SPACING_R = 0.11f;
 static constexpr float RADAR_BALL_DIGIT_HEIGHT_R = 0.075f;
 static constexpr float RADAR_BALL_DIGIT_STROKE_R = 0.013f;
 static constexpr float RADAR_BALL_DIGIT_DX_R = 0.075f;
@@ -162,14 +167,35 @@ static constexpr uint32_t RADAR_BOOT_BALLS_TO_MS = 1500;
 static const uint16_t RADAR_BOOT_FLICKER_AT_MS[2] = {70, 150};
 #define RADAR_BOOT_SFX "power_on"
 
-// ---- sweep line: off (the anime radar has none)
-#define RADAR_SWEEP_ENABLED 0
+// ---- scan effect (sweep). line: a clockwise hand with a fading trail; ring: a ring that grows on
+// every beep; both; none. RADAR_SWEEP_DEFAULT is the mode at first boot (none when disabled).
+#define RADAR_SWEEP_ENABLED 1
+enum RadarSweepMode : uint8_t {
+  RADAR_SWEEP_LINE,
+  RADAR_SWEEP_RING,
+  RADAR_SWEEP_BOTH,
+  RADAR_SWEEP_NONE,
+  RADAR_SWEEP_COUNT
+};
+static const char *const RADAR_SWEEP_NAMES[RADAR_SWEEP_COUNT] = {"line", "ring", "both", "none"};
+#define RADAR_SWEEP_DEFAULT RADAR_SWEEP_LINE
+static constexpr uint32_t RADAR_SWEEP_LINE_PERIOD_MS = 2400;
+static constexpr float RADAR_SWEEP_LINE_TRAIL_DEG = 75.0f;
+static constexpr float RADAR_SWEEP_LINE_ALPHA = 0.55f;
+static constexpr float RADAR_SWEEP_LINE_TRAIL_ALPHA = 0.28f;
+static constexpr float RADAR_SWEEP_LINE_LINE_WIDTH_R = 0.012f;
+#define RADAR_SWEEP_LINE_DOT_FLASH 1
+static constexpr uint32_t RADAR_SWEEP_RING_DURATION_MS = 520;
+static constexpr float RADAR_SWEEP_RING_WIDTH_R = 0.025f;
+static constexpr float RADAR_SWEEP_RING_ALPHA = 0.6f;
+static constexpr float RADAR_SWEEP_RING_MAX_R = 1.0f;
+#define RADAR_SWEEP_RING_SYNC_TO_BEEP 1
 
 // ---- radar beep (from shared/sounds.json): interval from the distance of the nearest ball
 #define RADAR_BEEP_SFX "radar_beep"
 static constexpr float RADAR_BEEP_NEAR_M = 3.0f;
 static constexpr float RADAR_BEEP_FAR_M = 10000.0f;
-static constexpr uint32_t RADAR_BEEP_MIN_INTERVAL_MS = 120;
+static constexpr uint32_t RADAR_BEEP_MIN_INTERVAL_MS = 160;
 static constexpr uint32_t RADAR_BEEP_MAX_INTERVAL_MS = 1400;
 static constexpr float RADAR_BEEP_CURVE_POW = 1.0f;
 static constexpr float RADAR_BEEP_CLOSE_M = 30.0f;
@@ -178,16 +204,25 @@ static constexpr float RADAR_BEEP_FOUND_M = 3.0f;
 #define RADAR_BEEP_FOUND_SFX "ball_found"
 static constexpr float RADAR_BEEP_REARM_FACTOR = 1.3f;
 
+// Synth rule (shared/sounds.json synth), read by sound.cpp through config.h: level of full scale at
+// volume v = LEVEL_AT_100 x 10^(-RANGE_DB x (1 - v/100)^CURVE_SHAPE / 20).
+#define RADAR_SYNTH_SAMPLE_RATE 48000
+#define RADAR_SYNTH_RAMP_MS 2.0f
+#define RADAR_SYNTH_LEVEL_AT_100 0.95f
+#define RADAR_SYNTH_RANGE_DB 36.0f
+#define RADAR_SYNTH_CURVE_SHAPE 2.5f
+
 // Per-effect gain, percent of the user volume (same order as SfxId in sounds.h).
 struct RadarSfxGain {
   const char *name;
   uint8_t gain;
 };
-#define RADAR_SFX_GAIN_COUNT 7
+#define RADAR_SFX_GAIN_COUNT 8
 static const RadarSfxGain RADAR_SFX_GAIN[RADAR_SFX_GAIN_COUNT] = {
     {"power_on", 80},
-    {"radar_beep", 70},
+    {"radar_beep", 100},
     {"zoom_out", 75},
+    {"button", 80},
     {"zoom_in", 75},
     {"ball_close", 80},
     {"ball_found", 85},

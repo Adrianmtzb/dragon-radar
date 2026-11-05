@@ -1,17 +1,19 @@
 {
-  "comment": "Sound catalogue of the radar. firmware/dragonradar/sounds.h is generated from this by the common tools/gen_sounds.mjs (each entry: name, tempo, notes in the melody format of sound.h: raw HZ:MS tones and R:MS rests, ~square / ~sine switches the waveform of the tones that follow). gain (0-100, percent of the user volume) and the beep block are read by tools/gen_radar.mjs (radar_assets.h), the preview and tools/preview/render_wav.mjs; the other fields are documentation. Reconstructed by ear from the anime's electronic 'pi' beeps; see docs/design.md.",
+  "comment": "Sound catalogue of the radar. firmware/dragonradar/sounds.h is generated from this by the common tools/gen_sounds.mjs (each entry: name, tempo, notes in the melody format of sound.h: raw HZ:MS tones and R:MS rests, ~square / ~sine / ~tri switches the waveform of the tones that follow). gain (0-100, percent of the user volume) and the beep block are read by tools/gen_radar.mjs (radar_assets.h), the preview and tools/preview/render_wav.mjs; the other fields are documentation. Matched to a measured clip of the anime's radar (pitch, harmonics and timing only; the clip is not in the repo): each beep is a 'pi-PI', about 80 ms at 2130 Hz then 60 ms an octave up at 4260 Hz, close to a triangle wave (3rd harmonic about 0.13); power on opens with a 2100 +- 100 Hz warble. See docs/design.md.",
   "synth": {
-    "comment": "How every renderer plays a tone (matches the ES8311 synth of sound.cpp): naive square or sine, amplitude ramped over rampMs at each change, level = 0.915 x (volume / 100)^2 of full scale. Raw HZ:MS tones are legato (no gap between them).",
-    "sampleRate": 24000,
+    "comment": "How every renderer plays a tone (matches the ES8311 synth of sound.cpp): square (naive), sine, or a band-limited triangle (its odd harmonics up to 0.45 x sampleRate, amplitude 1/k^2), at sampleRate. Amplitude ramps over rampMs at each change. Level of full scale at user volume v (0-100, after the effect's gain: v = volume x gain / 100): levelAt100 x 10^(-rangeDb x (1 - v/100)^curveShape / 20), and 0 at v = 0; with these values volume 60 is -3.6 dB, 30 is -16 dB and 10 is -28 dB. Raw HZ:MS tones are legato (no gap between them).",
+    "sampleRate": 48000,
     "rampMs": 2,
-    "levelAt100": 0.915
+    "levelAt100": 0.95,
+    "rangeDb": 36,
+    "curveShape": 2.5
   },
   "beep": {
     "comment": "The radar beep repeats while at least one ball is known. Its interval depends on the distance d (metres) of the nearest ball, on a log scale: t = clamp((log10(farM) - log10(d)) / (log10(farM) - log10(nearM)), 0, 1); interval = maxIntervalMs + (minIntervalMs - maxIntervalMs) x t^curvePow. The distance is absolute, so zooming does not change the rhythm. The dots flash on every beep (radar.json blink). Crossing closeM plays ball_close once and crossing foundM plays ball_found once; each re-arms when the distance grows past threshold x rearmFactor.",
     "sfx": "radar_beep",
     "nearM": 3,
     "farM": 10000,
-    "minIntervalMs": 120,
+    "minIntervalMs": 160,
     "maxIntervalMs": 1400,
     "curvePow": 1.0,
     "closeM": 30,
@@ -25,55 +27,63 @@
       "name": "power_on",
       "tempo": 120,
       "gain": 80,
-      "notes": "~square 600:20 700:20 800:20 900:20 1000:20 1100:20 1200:20 1300:20 1400:20 1500:20 1600:20 1700:20 R:460 ~sine 2400:45 R:195 2400:40 3200:90",
-      "es": "Encendido: barrido que sube mientras se enciende la pantalla, un pip cuando aparece el marcador y un pip doble con la onda de escaneo",
-      "en": "Power on: a rising sweep while the screen lights up, a pip when the marker appears and a double pip with the scan ring"
+      "notes": "~tri 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 R:364 2130:80 4260:60 R:100 2130:80 4260:60",
+      "es": "Encendido: tono que tiembla mientras se enciende la pantalla y dos \"pi-PI\" con el marcador y la onda",
+      "en": "Power on: a warbling tone while the screen lights up and two \"pi-PI\" with the marker and the scan ring"
     },
     {
       "name": "radar_beep",
       "tempo": 120,
-      "gain": 70,
-      "notes": "~sine 2400:55",
-      "es": "El pitido del radar; se repite más rápido cuanto más cerca está la esfera",
-      "en": "The radar beep; repeats faster the closer the nearest ball is"
+      "gain": 100,
+      "notes": "~tri 2130:80 4260:60",
+      "es": "El \"pi-PI\" del radar: dos tonos a una octava; se repite más rápido cuanto más cerca está la esfera",
+      "en": "The radar \"pi-PI\": two tones an octave apart; repeats faster the closer the nearest ball is"
     },
     {
       "name": "zoom_out",
       "tempo": 120,
       "gain": 75,
-      "notes": "~square 3600:5 R:12 ~sine 1900:35",
-      "es": "Botón de arriba: clic mecánico y un blip agudo al alejar la escala",
-      "en": "Top button: a mechanical click and a high blip when zooming out"
+      "notes": "~tri 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 R:20 4260:40",
+      "es": "Botón de arriba: el \"brrr\" del botón y un blip agudo al alejar la escala",
+      "en": "Top button: the button \"brrr\" and a high blip when zooming out"
+    },
+    {
+      "name": "button",
+      "tempo": 120,
+      "gain": 80,
+      "notes": "~tri 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12",
+      "es": "Pulsar un botón o la pantalla: el \"brrr\" que tiembla entre 2000 y 2200 Hz del clip del anime, antes del pitido",
+      "en": "Any button or screen press: the \"brrr\" warbling between 2000 and 2200 Hz in the anime clip, before the beep"
     },
     {
       "name": "zoom_in",
       "tempo": 120,
       "gain": 75,
-      "notes": "~square 3600:5 R:12 ~sine 1400:35",
-      "es": "Acercar la escala: el mismo clic con un blip más grave",
-      "en": "Zoom in: the same click with a lower blip"
+      "notes": "~tri 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 R:20 2130:40",
+      "es": "Acercar la escala: el mismo \"brrr\" con un blip más grave",
+      "en": "Zoom in: the same \"brrr\" with a lower blip"
     },
     {
       "name": "ball_close",
       "tempo": 120,
       "gain": 80,
-      "notes": "~sine 2400:45 R:35 2400:45 R:35 2400:45",
-      "es": "Una esfera entra a menos de 30 m: tres pips rápidos",
-      "en": "A ball comes within 30 m: three quick pips"
+      "notes": "~tri 2130:40 4260:30 R:30 2130:40 4260:30 R:30 2130:40 4260:30",
+      "es": "Una esfera entra a menos de 30 m: tres \"pi-PI\" rápidos",
+      "en": "A ball comes within 30 m: three quick \"pi-PI\""
     },
     {
       "name": "ball_found",
       "tempo": 120,
       "gain": 85,
-      "notes": "~sine 1568:70 R:15 2093:70 R:15 2637:70 R:15 3136:180",
-      "es": "Esfera encontrada (a menos de 3 m): cuatro notas que suben",
-      "en": "Ball found (within 3 m): four rising notes"
+      "notes": "~tri 1568:70 R:15 2093:70 R:15 2637:70 R:15 3136:120 4260:120",
+      "es": "Esfera encontrada (a menos de 3 m): cuatro notas que suben y un pip final",
+      "en": "Ball found (within 3 m): four rising notes and a final pip"
     },
     {
       "name": "power_off",
       "tempo": 120,
       "gain": 75,
-      "notes": "~square 1800:20 1600:20 1400:20 1250:20 1100:20 950:25 800:25 650:30 500:40 380:60",
+      "notes": "~tri 2200:20 2000:20 1800:20 1600:20 1400:20 1250:20 1100:20 950:25 800:25 650:30 500:40",
       "es": "Apagado: barrido que baja mientras se apaga la pantalla",
       "en": "Power off: a falling sweep while the screen goes dark"
     }

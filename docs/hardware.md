@@ -108,10 +108,9 @@ que el ejemplo de Waveshare) y enciende las medidas del ADC del PMIC.
 
 ### Pendiente de verificar en la placa
 
-- **Sin verificar**: la imagen real del panel (centrado con el offset de columna 6 de Waveshare,
-  colores, brillo). Las capturas de `make shot` son el framebuffer, no lo que muestra el cristal.
+- Verificado a ojo (2026-11-03): el splash se ve centrado y con los colores correctos con el offset
+  de columna 6 de Waveshare a 40 MHz. El reloj de 80 MHz sigue sin probarse a ojo.
 - **Sin verificar**: la calibración del táctil (1:1 con `setMirrorXY(true, true)`). Un toque real dio
   `raw=(442, 335)`, dentro del rango 0–465, pero falta medirlo con cruces como en las otras placas.
 - **Sin verificar**: la orientación de los ejes del QMI8658 respecto a la pantalla (`IMU_NATIVE_AXES`).
-- **Sin verificar**: que el altavoz suene; la señal llega al códec y el amplificador se activa, pero
-  nadie lo ha escuchado todavía.
+- Verificado de oído (2026-11-03): el altavoz suena (`beep 2000 300 sine 70` y `beep 2400 120 sine 70`).

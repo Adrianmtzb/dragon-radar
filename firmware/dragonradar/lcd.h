@@ -21,6 +21,15 @@ bool lcdPortrait();                // rotations 0 and 2
 void lcdSetBacklight(uint8_t duty);
 uint8_t lcdBacklight();            // last duty requested
 uint32_t lcdBacklightDuty();       // duty the LEDC actually outputs (AMOLED: last level sent), for diagnostics
+// Sends only a rectangle of the canvas to the panel (clipped; widened to even coordinates where the
+// controller needs it), for apps that know which part of the frame changed.
+void lcdFlushRect(int16_t x, int16_t y, int16_t w, int16_t h);
+// Sends w x h contiguous pixels (row by row) to that window of the panel, bypassing the canvas. The
+// caller keeps the window inside the screen (and on even coordinates where lcdFlushRect aligns).
+void lcdPushRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t *pixels);
+// The same with the pixels already byte-swapped (big-endian, as the panel takes them) in DMA-capable
+// internal RAM: the bus sends the buffer as it is, which is about twice as fast.
+void lcdPushRectBE(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t *pixels);
 // Horizontal pixels hidden by a rounded corner of the glass at `dist` px from the top or bottom
 // edge (0 on square glass): keeps text and bars clear of the bezel.
 int16_t lcdEdgeInset(int16_t dist);

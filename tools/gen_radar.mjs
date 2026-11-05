@@ -23,8 +23,9 @@ const num = (v, name, lo = -Infinity, hi = Infinity) => {
 };
 
 const COLOR_KEYS = ['background', 'screen', 'screenCenter', 'screenEdge', 'rim', 'grid', 'ballCore', 'ballDim',
-  'ballGlow', 'marker', 'markerEdge', 'digits', 'arrow', 'text', 'ping', 'sheen'];
-const COUNTS = ['none', 'clusters', 'all'];  // RadarCounts order
+  'ballGlow', 'marker', 'markerEdge', 'digits', 'arrow', 'text', 'ping', 'sheen', 'sweep'];
+const COUNTS = ['none', 'clusters', 'all', 'stars'];  // RadarCounts order
+const SWEEP_MODES = ['line', 'ring', 'both', 'none'];  // the firmware knows these four
 const themeNames = Object.keys(radar.themes || {});
 if (!themeNames.length) fail('no themes');
 if (!radar.themes[radar.theme]) fail(`default theme "${radar.theme}" is not defined`);
@@ -62,13 +63,33 @@ for (const s of sounds.sfx) {
   num(s.gain, `sfx ${s.name}.gain`, 0, 100);
   // The preview and render_wav.mjs synthesize the raw-tone subset only; keep the catalogue in it.
   for (const tok of s.notes.trim().split(/\s+/))
-    if (!/^(~square|~sine|R:\d+|\d+:\d+)$/.test(tok)) fail(`sfx ${s.name}: token "${tok}" is outside HZ:MS, R:MS, ~square, ~sine`);
+    if (!/^(~square|~sine|~tri|R:\d+|\d+:\d+)$/.test(tok)) fail(`sfx ${s.name}: token "${tok}" is outside HZ:MS, R:MS, ~square, ~sine, ~tri`);
 }
+const sy = sounds.synth;
+if (![24000, 32000, 44100, 48000].includes(sy.sampleRate)) fail('synth.sampleRate must be 24000, 32000, 44100 or 48000');
+num(sy.rampMs, 'synth.rampMs', 0.1, 50);
+num(sy.levelAt100, 'synth.levelAt100', 0.05, 1);
+num(sy.rangeDb, 'synth.rangeDb', 6, 90);
+num(sy.curveShape, 'synth.curveShape', 0.2, 5);
 const bp = sounds.beep;
 num(bp.nearM, 'beep.nearM', 0.01);
 num(bp.farM, 'beep.farM', bp.nearM * 1.0001);
 num(bp.minIntervalMs, 'beep.minIntervalMs', 30);
 num(bp.maxIntervalMs, 'beep.maxIntervalMs', bp.minIntervalMs);
+
+const sw = radar.sweep;
+if (!Array.isArray(sw.modes) || sw.modes.length !== SWEEP_MODES.length || !SWEEP_MODES.every((m) => sw.modes.includes(m)))
+  fail(`sweep.modes must list ${SWEEP_MODES.join(', ')}`);
+if (!sw.modes.includes(sw.mode)) fail(`sweep.mode "${sw.mode}" is not in sweep.modes`);
+num(sw.line.periodMs, 'sweep.line.periodMs', 200);
+num(sw.line.trailDeg, 'sweep.line.trailDeg', 0, 180);  // the firmware draws the trail as one convex wedge
+num(sw.line.alpha, 'sweep.line.alpha', 0, 1);
+num(sw.line.trailAlpha, 'sweep.line.trailAlpha', 0, 1);
+num(sw.line.lineWidthR, 'sweep.line.lineWidthR', 0.001, 0.1);
+num(sw.ring.durationMs, 'sweep.ring.durationMs', 50);
+num(sw.ring.widthR, 'sweep.ring.widthR', 0.001, 0.2);
+num(sw.ring.alpha, 'sweep.ring.alpha', 0, 1);
+num(sw.ring.maxR, 'sweep.ring.maxR', 0.05, 1.5);
 
 const font = radar.font;
 const glyphs = Object.entries(font.glyphs);
@@ -113,7 +134,9 @@ ${COLOR_KEYS.map((k) => `  uint32_t ${k}888;`).join('\n')}
   uint8_t counts;  // RadarCounts: which dots carry a ball count
 };
 
-enum RadarCounts : uint8_t { RADAR_COUNTS_NONE, RADAR_COUNTS_CLUSTERS, RADAR_COUNTS_ALL };
+// stars: each dot shows the star number of its (nearest) ball; all: the ball count of every dot;
+// clusters: the count of merged dots only; none: no digits.
+enum RadarCounts : uint8_t { RADAR_COUNTS_NONE, RADAR_COUNTS_CLUSTERS, RADAR_COUNTS_ALL, RADAR_COUNTS_STARS };
 
 enum RadarThemeId : uint8_t {
 ${themeNames.map((t) => `  RADAR_THEME_${t.toUpperCase()},`).join('\n')}
@@ -191,8 +214,17 @@ ${block('RADAR_BOOT', b).trimEnd()}
 static const uint16_t RADAR_BOOT_FLICKER_AT_MS[${Math.max(1, b.flickerAtMs.length)}] = {${b.flickerAtMs.join(', ') || '0'}};
 #define RADAR_BOOT_SFX ${cstr(b.sfx)}
 
-// ---- sweep line: off (the anime radar has none)
-#define RADAR_SWEEP_ENABLED ${radar.sweep.enabled ? 1 : 0}
+// ---- scan effect (sweep). line: a clockwise hand with a fading trail; ring: a ring that grows on
+// every beep; both; none. RADAR_SWEEP_DEFAULT is the mode at first boot (none when disabled).
+#define RADAR_SWEEP_ENABLED ${sw.enabled ? 1 : 0}
+enum RadarSweepMode : uint8_t {
+${sw.modes.map((m) => `  RADAR_SWEEP_${m.toUpperCase()},`).join('\n')}
+  RADAR_SWEEP_COUNT
+};
+static const char *const RADAR_SWEEP_NAMES[RADAR_SWEEP_COUNT] = {${sw.modes.map(cstr).join(', ')}};
+#define RADAR_SWEEP_DEFAULT RADAR_SWEEP_${(sw.enabled ? sw.mode : 'none').toUpperCase()}
+${block('RADAR_SWEEP_LINE', sw.line, ['dotFlash'])}#define RADAR_SWEEP_LINE_DOT_FLASH ${sw.line.dotFlash ? 1 : 0}
+${block('RADAR_SWEEP_RING', sw.ring, ['syncToBeep'])}#define RADAR_SWEEP_RING_SYNC_TO_BEEP ${sw.ring.syncToBeep ? 1 : 0}
 
 // ---- radar beep (from shared/sounds.json): interval from the distance of the nearest ball
 #define RADAR_BEEP_SFX ${cstr(bp.sfx)}
@@ -206,6 +238,14 @@ static constexpr float RADAR_BEEP_CLOSE_M = ${f(bp.closeM)};
 static constexpr float RADAR_BEEP_FOUND_M = ${f(bp.foundM)};
 #define RADAR_BEEP_FOUND_SFX ${cstr(bp.foundSfx)}
 static constexpr float RADAR_BEEP_REARM_FACTOR = ${f(bp.rearmFactor)};
+
+// Synth rule (shared/sounds.json synth), read by sound.cpp through config.h: level of full scale at
+// volume v = LEVEL_AT_100 x 10^(-RANGE_DB x (1 - v/100)^CURVE_SHAPE / 20).
+#define RADAR_SYNTH_SAMPLE_RATE ${sy.sampleRate}
+#define RADAR_SYNTH_RAMP_MS ${f(sy.rampMs)}
+#define RADAR_SYNTH_LEVEL_AT_100 ${f(sy.levelAt100)}
+#define RADAR_SYNTH_RANGE_DB ${f(sy.rangeDb)}
+#define RADAR_SYNTH_CURVE_SHAPE ${f(sy.curveShape)}
 
 // Per-effect gain, percent of the user volume (same order as SfxId in sounds.h).
 struct RadarSfxGain {

@@ -259,6 +259,7 @@ void cliRun(const String &input) {
   String rest = sp < 0 ? String("") : l.substring(sp + 1);
   rest.trim();
   cmd.toLowerCase();
+  if (hooks.override && hooks.override(cmd, rest)) return;
   if (runCommon(cmd, rest)) return;
   if (hooks.command && hooks.command(cmd, rest)) return;
   Serial.println("unknown command, try 'help'");

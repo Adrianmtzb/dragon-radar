@@ -4,7 +4,7 @@
 #include <Arduino.h>
 
 #define FW_NAME "Dragon Radar"
-#define FW_VERSION "0.1.0"
+#define FW_VERSION "0.0.1"
 #define PROJECT_URL "https://github.com/Adrianmtzb/dragon-radar"  // the repo (setup page and panel credits)
 #define AUTHOR_URL "https://adrianmb.dev"
 #define AUTHOR_SHORT "adrianmb.dev"  // splash credit
@@ -42,9 +42,18 @@
 #define BUTTON_LONG_PRESS_MS 600
 #define BUTTON_RESET_PRESS_MS 6000
 
-// Sound (sound.cpp). Volume 0-100 on the curve of sound.h; the speaker is loud, so 40 by default.
-#define SOUND_DEFAULT_VOLUME 40
+// Sound (sound.cpp). Volume 0-100 on the curve of sound.h; 60 as in the radar preview (each radar
+// sound also has its own gain, RADAR_SFX_GAIN).
+#define SOUND_DEFAULT_VOLUME 60
 #define SOUND_DEFAULT_WAVE WAVE_SQUARE
 #define SOUND_MAX_TONES 512
+// The synth rule of shared/sounds.json (generated into radar_assets.h): sample rate, ramp and the
+// volume curve.
+#include "radar_assets.h"
+#define SOUND_RATE RADAR_SYNTH_SAMPLE_RATE
+#define SOUND_RAMP_MS RADAR_SYNTH_RAMP_MS
+#define SOUND_LEVEL_AT_100 RADAR_SYNTH_LEVEL_AT_100
+#define SOUND_RANGE_DB RADAR_SYNTH_RANGE_DB
+#define SOUND_CURVE_SHAPE RADAR_SYNTH_CURVE_SHAPE
 #define LED_APP_MODE_NAME "app"
 #define LED_DEFAULT_BRIGHTNESS 40

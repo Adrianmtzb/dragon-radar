@@ -19,6 +19,9 @@ struct CliHooks {
   bool (*command)(const String &cmd, const String &args);
   void (*help)(Print &out);    // app lines for `help`
   void (*status)(Print &out);  // app part of `status`, printed before the device lines
+  // Tried before the common commands, for an app that gives one of them its own meaning (e.g.
+  // its sounds with their own gain). Returns false to let the common command run.
+  bool (*override)(const String &cmd, const String &args);
 };
 
 void cliBegin(const CliHooks &hooks);

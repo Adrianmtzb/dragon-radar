@@ -1,0 +1,132 @@
+# Shared by every project on the common ESP32 base: only the block between the app markers
+# changes from one repo to another. The real commands live in core.mk and the Makefile, so CI
+# runs exactly what a contributor runs locally.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build firmware (${{ matrix.board }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # One job per board: the same list as BOARDS in the Makefile.
+        # >>> app
+        board: [amoled]
+        # <<< app
+    env:
+      BOARD: ${{ matrix.board }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      # The ESP32 core is several hundred MB; without a cache every run would spend most of
+      # its time downloading. The key follows core.mk and the Makefile, where the versions
+      # are pinned, and the OS, since the toolchain binaries are per platform.
+      - name: Cache core and libraries
+        uses: actions/cache@v4
+        with:
+          path: ~/.arduino15
+          key: arduino-${{ runner.os }}-${{ hashFiles('core.mk', 'Makefile') }}
+
+      - name: Install core and libraries
+        run: make deps
+
+      # Generated files are committed: fail if someone edited them by hand or forgot to
+      # regenerate. The same target checks the installer manifests, the cross-component
+      # consistency (firmware, web, landing, MCP) and runs the MCP tests.
+      - name: Check manifests, generated files and consistency
+        run: make check
+
+      - name: Compile
+        run: make build
+
+      # Renames to <part>-<board>.bin, <app>-<board>.bin and <app>-<board>.merged.bin, and
+      # adds boot_app0.bin, which ships with the core instead of coming out of the compiler.
+      - name: Collect binaries
+        run: make dist
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.board }}
+          path: dist/*.bin
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: firmware-*
+          merge-multiple: true
+          path: dist
+
+      # The app image and the merged image of each board; the loose parts are for the
+      # web installer only.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=$(ls dist/*.bin | grep -vE '/(bootloader|partitions|boot_app0)-')
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --generate-notes $files
+
+  pages:
+    name: Deploy web installer
+    needs: [build]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: firmware-*
+          merge-multiple: true
+          path: dist
+
+      # Binaries never live in the repo: the site is assembled here from the build job's
+      # artifacts, so the published page can never lag behind the firmware.
+      - name: Assemble the site
+        run: >
+          make site NOBUILD=1
+          REPO_URL=https://github.com/${{ github.repository }}
+          SITE_URL=https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

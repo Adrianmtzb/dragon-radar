@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dragon Radar · ESP32-S3 AMOLED</title>
+<meta name="description" content="Radar del Dragón para la Waveshare ESP32-S3-Touch-AMOLED-1.75C: esferas, zoom de 10 m a 10 km, pitido que acelera al acercarte, web, API y MCP. · Dragon Radar for the Waveshare ESP32-S3-Touch-AMOLED-1.75C: balls, 10 m to 10 km zoom, a beep that speeds up as you get closer, web UI, API and MCP.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#050805">
+<link rel="canonical" href="https://adrianmtzb.github.io/dragon-radar/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Dragon Radar">
+<meta property="og:locale" content="es_MX">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:title" content="Dragon Radar · el Radar del Dragón en una ESP32-S3">
+<meta property="og:description" content="Firmware libre para la Waveshare ESP32-S3-Touch-AMOLED-1.75C: siete esferas, flechas en el borde, cuatro escalas y el «pi-PI» que acelera cuando te acercas. Instálalo desde el navegador.">
+<meta property="og:url" content="__SITE_URL__">
+<meta property="og:image" content="__SITE_URL__og.png">
+<meta property="og:image:secure_url" content="__SITE_URL__og.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Pantalla redonda verde con cuadrícula, esferas amarillas y el triángulo rojo del usuario en el centro, junto al título Dragon Radar">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Dragon Radar · ESP32-S3 AMOLED">
+<meta name="twitter:description" content="El Radar del Dragón en una placa ESP32-S3 con pantalla AMOLED redonda. Web, API y MCP.">
+<meta name="twitter:image" content="__SITE_URL__og.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23f2f2ec'/%3E%3Ccircle cx='16' cy='16' r='12' fill='%230c8a12'/%3E%3Cpath d='M10.7 4v24M16 4v24M21.3 4v24M4 10.7h24M4 16h24M4 21.3h24' stroke='%23004800' stroke-width='1'/%3E%3Ccircle cx='22' cy='9.5' r='2.4' fill='%23fffbe5'/%3E%3Cpath d='M16 13.4l2.6 4.4h-5.2z' fill='%23e80d07'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Dragon Radar",
+ "applicationCategory": "EmbeddedFirmware", "operatingSystem": "ESP32-S3",
+ "url": "https://adrianmtzb.github.io/dragon-radar/", "license": "https://opensource.org/licenses/MIT",
+ "author": {"@type": "Person", "name": "adrianmb", "url": "https://adrianmb.dev/"}}
+</script>
+<style>
+/* Theme colours of the radar: the defaults are theme "z" of shared/radar.json; the demo's theme
+   picker rewrites the --t-* variables from the same file. */
+:root {
+  --t-screen: #0c8a12; --t-center: #18a020; --t-edge: #04620a; --t-grid: #004800;
+  --t-glow: #ecef88; --t-core: #fffbe5; --t-marker: #e80d07; --t-ping: #b8f0a0;
+  --bg: #050805; --bg2: #0a110a; --card: #0d160d; --line: #1c2b1c;
+  --text: #e6f2e0; --muted: #98ab93; --accent: var(--t-ping); --btn: var(--t-center); --btn-text: #021a03;
+  --code: #081008; --shadow: 0 18px 50px rgba(0,0,0,.5);
+  --font: "Space Grotesk", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f3f6ef; --bg2: #e8eee2; --card: #ffffff; --line: #d3ddcc;
+    --text: #102010; --muted: #4f604c; --accent: #0b6e12; --code: #eaf0e5; --shadow: 0 12px 30px rgba(20,50,20,.10);
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f3f6ef; --bg2: #e8eee2; --card: #ffffff; --line: #d3ddcc;
+  --text: #102010; --muted: #4f604c; --accent: #0b6e12; --code: #eaf0e5; --shadow: 0 12px 30px rgba(20,50,20,.10);
+}
+html[lang=es] [lang=en], html[lang=en] [lang=es] { display: none !important; }
+.inl { display: inline; }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--font); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code, pre { font-family: var(--mono); font-size: .88em; }
+code { background: var(--code); padding: .1em .35em; border-radius: 5px; }
+pre { background: var(--code); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; line-height: 1.5; margin: 10px 0 0; }
+pre code { background: none; padding: 0; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+
+/* nav */
+nav.top { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+nav.top .wrap { display: flex; align-items: center; gap: 18px; height: 56px; }
+.brand { font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 9px; white-space: nowrap; }
+.brand:hover { text-decoration: none; }
+.brand i { width: 18px; height: 18px; border-radius: 50%; display: inline-block; background: radial-gradient(circle at 68% 30%, var(--t-core) 0 2.5px, transparent 3px), radial-gradient(circle, var(--t-center), var(--t-edge)); box-shadow: 0 0 0 2px #e9ebe3; }
+nav.top .links { display: flex; gap: 16px; overflow-x: auto; flex: 1; scrollbar-width: none; }
+nav.top .links a { color: var(--muted); font-size: 14px; white-space: nowrap; }
+nav.top .links a:hover { color: var(--text); text-decoration: none; }
+.toggles { display: flex; gap: 6px; }
+.chipbtn { background: var(--card); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 5px 10px; font: 600 12px var(--mono); cursor: pointer; }
+
+/* hero */
+.herobg { background:
+  linear-gradient(to bottom, transparent 60%, var(--bg)),
+  repeating-linear-gradient(0deg, color-mix(in srgb, var(--t-grid) 35%, transparent) 0 1px, transparent 1px 52px),
+  repeating-linear-gradient(90deg, color-mix(in srgb, var(--t-grid) 35%, transparent) 0 1px, transparent 1px 52px); }
+.hero { padding: 52px 0 44px; display: grid; grid-template-columns: 1fr 1fr; gap: 44px; align-items: center; }
+.eyebrow { font: 600 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin: 0 0 10px; }
+h1 { font-size: clamp(36px, 5.2vw, 58px); line-height: 1.04; margin: 0 0 16px; letter-spacing: -.02em; }
+h1 em { font-style: normal; color: var(--t-glow); text-shadow: 0 0 28px color-mix(in srgb, var(--t-glow) 45%, transparent); }
+:root[data-theme="light"] h1 em { color: var(--t-edge); text-shadow: none; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) h1 em { color: var(--t-edge); text-shadow: none; } }
+h2 { font-size: clamp(26px, 3.4vw, 36px); line-height: 1.15; margin: 0 0 12px; letter-spacing: -.01em; }
+h3 { margin: 0 0 6px; font-size: 18px; }
+.lead { color: var(--muted); font-size: 18px; margin: 0 0 24px; }
+.ctas { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 10px; padding: 12px 18px; font: 600 15px var(--font); cursor: pointer; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+.btn:hover { text-decoration: none; border-color: var(--accent); }
+.btn.primary { background: var(--btn); border-color: var(--btn); color: var(--btn-text); }
+.btn.primary:hover { filter: brightness(1.1); }
+.ver { font: 600 13px var(--mono); color: var(--muted); }
+.unsupported-msg { display: none; color: var(--muted); font-size: 14px; margin: 10px 0 0; }
+body.unsupported esp-web-install-button { display: none; }
+body.unsupported .unsupported-msg { display: block; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 28px; }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.stat b { display: block; font-size: 24px; line-height: 1.15; white-space: nowrap; }
+.stat b.range { font-size: clamp(17px, 1.7vw, 22px); line-height: 1.6; }
+.stat span { color: var(--muted); font-size: 13px; }
+
+/* demo: the white casing with the knob on top, as in the anime (HTML decoration; the canvas is the screen) */
+.demo { display: grid; justify-items: center; gap: 14px; }
+.casing { position: relative; width: min(100%, 500px); aspect-ratio: 1; border-radius: 50%; padding: 6.5%; margin-top: 34px;
+  background: radial-gradient(circle at 35% 28%, #fbfbf7, #dadcd4 58%, #a6a99f); box-shadow: var(--shadow), inset 0 -8px 16px rgba(0,0,0,.18); }
+.knob { position: absolute; left: 50%; top: -34px; width: 70px; height: 46px; transform: translateX(-50%); border: 0; padding: 0; cursor: pointer;
+  border-radius: 14px 14px 6px 6px; background: repeating-linear-gradient(90deg, #8d9088 0 4px, #c9cbc3 4px 8px); box-shadow: 0 4px 8px rgba(0,0,0,.4); touch-action: none; }
+.knob:active, .knob.down { transform: translateX(-50%) translateY(4px); }
+.screen { position: relative; width: 100%; aspect-ratio: 1; border-radius: 50%; overflow: hidden; background: #000;
+  box-shadow: 0 0 0 3px #b8bab2, 0 0 40px color-mix(in srgb, var(--t-screen) 40%, transparent); }
+.screen canvas { display: block; width: 100%; height: 100%; touch-action: pan-y; cursor: pointer; }
+.infocard { position: absolute; inset: 0; display: none; place-content: center; text-align: center; gap: 4px; border-radius: 50%;
+  background: rgba(0,0,0,.86); color: #d8f8c0; font: 500 clamp(12px, 3.4vw, 16px)/1.35 var(--font); padding: 18%; }
+.infocard.show { display: grid; }
+.infocard b { font-size: 1.5em; color: var(--t-glow); }
+.infocard small { color: #8fa58a; }
+.devbar { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.devbtn { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; font: 600 12px var(--mono); cursor: pointer; user-select: none; touch-action: none; }
+.devbtn.down { background: color-mix(in srgb, var(--t-center) 30%, var(--card)); }
+.devbtn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.hint { color: var(--muted); font-size: 13px; text-align: center; margin: 0; max-width: 500px; }
+.democtl { display: grid; gap: 10px; width: min(100%, 500px); }
+.ctlrow { display: grid; grid-template-columns: 92px 1fr; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px; font: 500 13px var(--mono); cursor: pointer; }
+.chips button.on { border-color: var(--accent); color: var(--accent); }
+input[type=range] { width: 100%; accent-color: var(--t-center); }
+.readout { font: 12px/1.5 var(--mono); color: var(--muted); text-align: center; min-height: 1.5em; }
+.demofail { display: none; color: var(--muted); font-size: 14px; text-align: center; max-width: 420px; }
+.demo.failed .demofail { display: block; }
+
+/* sections */
+section.block { padding: 64px 0; border-top: 1px solid var(--line); }
+.sub { color: var(--muted); max-width: 740px; margin: 0 0 28px; }
+.grid { display: grid; gap: 14px; }
+.g2 { grid-template-columns: repeat(2, 1fr); }
+.g3 { grid-template-columns: repeat(3, 1fr); }
+.g4 { grid-template-columns: repeat(4, 1fr); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; min-width: 0; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.card p + p { margin-top: 8px; }
+.tag { display: inline-block; font: 600 11px var(--mono); color: var(--accent); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; margin-bottom: 8px; }
+.levels { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 12px; }
+.level { border: 1px solid var(--line); border-radius: 10px; padding: 10px; text-align: center; }
+.level b { display: block; font: 600 18px var(--mono); color: var(--text); }
+.level span { font-size: 12px; color: var(--muted); }
+.sfxlist { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.sfxlist li { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.sfxlist button { background: none; border: 1px solid var(--line); color: var(--accent); border-radius: 50%; width: 32px; height: 32px; cursor: pointer; font-size: 12px; }
+.sfxlist code { font-size: 12px; }
+.sfxlist .d { color: var(--muted); font-size: 14px; }
+.sfxlist .ms { font: 12px var(--mono); color: var(--muted); }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
+tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; }
+ol.steps { padding-left: 20px; margin: 0; }
+ol.steps li { margin-bottom: 8px; color: var(--muted); }
+ol.steps li b { color: var(--text); }
+.tip { display: flex; align-items: center; gap: 16px; margin-top: 28px; max-width: 560px; padding: 12px 16px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); font-size: 14px; }
+.tip:hover { text-decoration: none; border-color: var(--accent); }
+.tip .qr { width: 84px; height: 84px; flex: none; border-radius: 6px; }
+.tip p { margin: 0; } .tip small { display: block; margin-top: 4px; font: 500 12px var(--mono); opacity: .8; }
+footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+footer .foot { max-width: 760px; min-width: 0; display: grid; gap: 8px; }
+footer p { margin: 0; }
+footer .legal { font-size: 12px; opacity: .85; }
+
+@media (max-width: 900px) {
+  .hero { grid-template-columns: 1fr; padding-top: 30px; }
+  .g3, .g4 { grid-template-columns: repeat(2, 1fr); }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+  .g2, .g3, .g4 { grid-template-columns: 1fr; }
+  .levels { grid-template-columns: repeat(2, 1fr); }
+  nav.top .links { display: none; }
+  nav.top .wrap { justify-content: space-between; }
+  .ctlrow { grid-template-columns: 1fr; gap: 4px; }
+}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="wrap">
+    <a class="brand" href="#inicio"><i></i>Dragon Radar</a>
+    <div class="links">
+      <a href="#demo">Demo</a>
+      <a href="#panel"><span lang="es">Panel web</span><span lang="en">Web panel</span></a>
+      <a href="#funciona"><span lang="es">Cómo funciona</span><span lang="en">How it works</span></a>
+      <a href="#controles"><span lang="es">Controles</span><span lang="en">Controls</span></a>
+      <a href="#hardware">Hardware</a>
+      <a href="#instalar"><span lang="es">Instalar</span><span lang="en">Install</span></a>
+      <a href="#dentro"><span lang="es">Por dentro</span><span lang="en">Internals</span></a>
+      <a href="__REPO_URL__">GitHub</a>
+      <a href="https://adrianmb.dev/">adrianmb.dev</a>
+    </div>
+    <div class="toggles">
+      <button class="chipbtn" id="langBtn" type="button" aria-label="Cambiar idioma / Switch language"><span lang="es" class="inl">English</span><span lang="en" class="inl">Español</span></button>
+      <button class="chipbtn" id="themeBtn" type="button" aria-label="Modo claro u oscuro / Light or dark mode">◐</button>
+    </div>
+  </div>
+</nav>
+
+<div class="herobg">
+<main class="wrap">
+  <header class="hero" id="inicio">
+    <div>
+      <p class="eyebrow">ESP32-S3 · AMOLED 466×466</p>
+      <h1><span lang="es">El Radar del Dragón, <em>en una placa ESP32</em></span><span lang="en">The Dragon Radar, <em>on an ESP32 board</em></span></h1>
+      <p class="lead">
+        <span lang="es">Firmware libre que convierte la Waveshare ESP32-S3-Touch-AMOLED-1.75C en el radar del anime: pantalla redonda verde con cuadrícula, siete esferas que parpadean, flechas en el borde para las lejanas, zoom de 10 m a 10 km y el «pi-PI» que acelera cuando te acercas. Con panel web, API HTTP y MCP.</span>
+        <span lang="en">Free firmware that turns the Waveshare ESP32-S3-Touch-AMOLED-1.75C into the radar from the anime: a round green screen with a grid, seven blinking balls, edge arrows for the far ones, zoom from 10 m to 10 km and the "pi-PI" beep that speeds up as you get closer. With a web panel, an HTTP API and MCP.</span>
+      </p>
+      <div class="ctas">
+        <esp-web-install-button manifest="manifest.json" id="installBtn">
+          <button slot="activate" class="btn primary" type="button"><span lang="es" class="inl">Instalar en tu placa</span><span lang="en" class="inl">Install on your board</span></button>
+          <span slot="unsupported"></span>
+        </esp-web-install-button>
+        <a class="btn" href="#demo"><span lang="es" class="inl">Probar la demo</span><span lang="en" class="inl">Try the demo</span></a>
+        <span class="ver" id="ver"></span>
+      </div>
+      <p class="unsupported-msg">
+        <span lang="es">Para instalar desde el navegador, abre esta página en Chrome o Edge de escritorio (usa Web Serial).</span>
+        <span lang="en">To install from the browser, open this page in desktop Chrome or Edge (it uses Web Serial).</span>
+      </p>
+      <div class="stats">
+        <div class="stat"><b id="statBalls">7</b><span lang="es">esferas</span><span lang="en">balls</span></div>
+        <div class="stat"><b id="statZoom" class="range">10 m–10 km</b><span lang="es">por celda</span><span lang="en">per cell</span></div>
+        <div class="stat"><b id="statSweep">4</b><span lang="es">barridos</span><span lang="en">sweep modes</span></div>
+        <div class="stat"><b id="statSfx">8</b><span lang="es">sonidos</span><span lang="en">sounds</span></div>
+      </div>
+    </div>
+
+    <div class="demo" id="demo">
+      <div class="casing">
+        <button class="knob" id="knob" type="button" title="BOOT: clic aleja, mantener muestra la info / click zooms out, hold shows the info" aria-label="BOOT"></button>
+        <div class="screen">
+          <canvas id="radar" width="466" height="466" tabindex="0" aria-label="Demo del radar: toca para alejar, desliza para cambiar de tema / Radar demo: tap to zoom out, swipe to change theme"></canvas>
+          <div class="infocard" id="info" aria-live="polite"></div>
+        </div>
+      </div>
+      <div class="devbar">
+        <button class="devbtn" id="bootBtn" type="button" title="Clic: alejar · mantener: info / Click: zoom out · hold: info">BOOT</button>
+        <button class="devbtn" id="key2Btn" type="button" title="Clic: acercar · mantener 600 ms: encender o apagar / Click: zoom in · hold 600 ms: power">KEY2</button>
+        <button class="devbtn" id="soundBtn" type="button" aria-pressed="false"><span lang="es" class="inl">Sonido</span><span lang="en" class="inl">Sound</span> <span id="soundState">off</span></button>
+      </div>
+      <p class="hint">
+        <span lang="es">Como en la placa: toca la pantalla o BOOT para alejar, KEY2 para acercar y mantén KEY2 600 ms para apagar o encender. Desliza a los lados para cambiar de tema y mantén pulsada la pantalla para fijar el norte. El sonido arranca solo cuando lo activas.</span>
+        <span lang="en">Just like the board: tap the screen or BOOT to zoom out, KEY2 to zoom in, and hold KEY2 for 600 ms to power off or on. Swipe sideways to change the theme and long-press the screen to set north. Sound only starts when you switch it on.</span>
+      </p>
+      <div class="democtl">
+        <div class="ctlrow"><span><span lang="es">Tema</span><span lang="en">Theme</span></span><div class="chips" id="themeChips"></div></div>
+        <div class="ctlrow"><span><span lang="es">Barrido</span><span lang="en">Sweep</span></span><div class="chips" id="sweepChips"></div></div>
+        <div class="ctlrow"><label for="walk"><span lang="es">Acércate</span><span lang="en">Walk closer</span></label><input id="walk" type="range" min="0" max="300" value="0"></div>
+        <div class="ctlrow"><label for="turn"><span lang="es">Gira</span><span lang="en">Turn</span></label><input id="turn" type="range" min="0" max="359" value="0"></div>
+        <div class="readout" id="readout" aria-live="off"></div>
+      </div>
+      <p class="demofail">
+        <span lang="es">La demo necesita los datos de <code>shared/</code>: abre la página publicada o sírvela con <code>make serve</code>.</span>
+        <span lang="en">The demo needs the data in <code>shared/</code>: open the published page or serve it with <code>make serve</code>.</span>
+      </p>
+    </div>
+  </header>
+</main>
+</div>
+
+<main class="wrap">
+  <section class="block" id="panel">
+    <p class="eyebrow"><span lang="es">Panel web</span><span lang="en">Web panel</span></p>
+    <h2><span lang="es">El radar en el navegador, servido por el chip</span><span lang="en">The radar in your browser, served by the chip</span></h2>
+    <p class="sub">
+      <span lang="es">Abre <code>http://dragonradar.local</code> (o la IP) y verás el radar en vivo, dibujado con el mismo código que esta demo a partir del estado de la placa. Es un único HTML sin dependencias, comprimido dentro del firmware.</span>
+      <span lang="en">Open <code>http://dragonradar.local</code> (or the IP) to see the radar live, drawn with the same code as this demo from the board's state. It is a single dependency-free HTML file, compressed into the firmware.</span>
+    </p>
+    <div class="grid g3">
+      <div class="card"><span class="tag">Radar</span><h3><span lang="es">Escala y encendido</span><span lang="en">Scale and power</span></h3><p><span lang="es">Acercar, alejar o elegir la escala, apagar y encender con su animación, y fijar el norte en la orientación actual.</span><span lang="en">Zoom in, zoom out or pick the scale, power off and on with its animation, and set north to the current orientation.</span></p></div>
+      <div class="card"><span class="tag">Look</span><h3><span lang="es">Tema, barrido y volumen</span><span lang="en">Theme, sweep and volume</span></h3><p><span lang="es">Los tres temas, los cuatro modos de barrido, el volumen y el silencio. Se guardan en la placa y sobreviven a un reinicio.</span><span lang="en">The three themes, the four sweep modes, volume and mute. They are stored on the board and survive a reboot.</span></p></div>
+      <div class="card"><span class="tag">Balls</span><h3><span lang="es">Coloca las esferas</span><span lang="en">Place the balls</span></h3><p><span lang="es">Una tabla con las siete esferas (estrellas, rumbo y distancia). Elige una fila y toca el radar para ponerla ahí a la escala actual, o vuelve a las de demostración.</span><span lang="en">A table with the seven balls (stars, bearing and distance). Pick a row and tap the radar to drop that ball there at the current scale, or go back to the demo set.</span></p></div>
+      <div class="card"><span class="tag">Sounds</span><h3><span lang="es">Sonidos</span><span lang="en">Sounds</span></h3><p><span lang="es">Un botón por sonido para oírlo en el altavoz de la placa.</span><span lang="en">One button per sound to play it on the board's speaker.</span></p></div>
+      <div class="card"><span class="tag">Setup</span><h3><span lang="es">Portal de configuración</span><span lang="en">Setup portal</span></h3><p><span lang="es">Sin WiFi guardada, la placa abre la red <code>DragonRadar-XXXX</code> y el móvil muestra el portal para elegir tu red. El panel y la API también funcionan desde ahí, sin internet.</span><span lang="en">With no saved WiFi, the board opens the <code>DragonRadar-XXXX</code> network and your phone shows the portal to pick your network. The panel and the API work from there too, with no internet.</span></p></div>
+      <div class="card"><span class="tag">Dev</span><h3><span lang="es">Sin reflashear</span><span lang="en">No reflashing</span></h3><p><span lang="es">Para trabajar en el panel, abre <code>web/index.html?host=&lt;IP&gt;</code> desde el disco: habla con la placa por la red.</span><span lang="en">To work on the panel, open <code>web/index.html?host=&lt;IP&gt;</code> from disk: it talks to the board over the network.</span></p></div>
+    </div>
+  </section>
+
+  <section class="block" id="funciona">
+    <p class="eyebrow"><span lang="es">Cómo funciona</span><span lang="en">How it works</span></p>
+    <h2><span lang="es">Esferas, escalas, pitido y barrido</span><span lang="en">Balls, scales, beep and sweep</span></h2>
+    <p class="sub">
+      <span lang="es">Todo sale de <code>shared/radar.json</code> y <code>shared/sounds.json</code>: los mismos ficheros generan las cabeceras del firmware, alimentan el panel web y dibujan esta página.</span>
+      <span lang="en">Everything comes from <code>shared/radar.json</code> and <code>shared/sounds.json</code>: the same files generate the firmware headers, feed the web panel and draw this page.</span>
+    </p>
+    <div class="grid g2">
+      <div class="card">
+        <h3><span lang="es">Las esferas</span><span lang="en">The balls</span></h3>
+        <p><span lang="es">Cada esfera es un punto con halo que lleva al lado su número de estrellas. El mapa va con el rumbo arriba: el giroscopio QMI8658 gira las esferas y el triángulo rojo del centro eres tú. Las que quedan fuera de la vista salen como flechas en el borde, y las que caen juntas se funden en un solo punto con el número de la más cercana.</span><span lang="en">Each ball is a glowing dot with its star count next to it. The map is heading-up: the QMI8658 gyro turns the balls and the red triangle in the middle is you. Balls outside the view show as arrows on the edge, and balls that land together merge into one dot carrying the number of the nearest.</span></p>
+      </div>
+      <div class="card">
+        <h3><span lang="es">Cuatro escalas</span><span lang="en">Four scales</span></h3>
+        <p><span lang="es">El botón de arriba aleja un nivel y del último vuelve al primero; KEY2 acerca. La cuadrícula no cambia de tamaño en pantalla: cambia lo que mide cada celda.</span><span lang="en">The top button zooms out one level and wraps from the last back to the first; KEY2 zooms in. The grid keeps its size on screen: what changes is the distance each cell covers.</span></p>
+        <div class="levels" id="levels"></div>
+      </div>
+      <div class="card">
+        <h3><span lang="es">El pitido</span><span lang="en">The beep</span></h3>
+        <p><span lang="es">Cada pitido es un «pi-PI»: 80 ms a 2130 Hz y 60 ms una octava más arriba, con onda triangular, medido en un fragmento del anime (tono y tiempos; el audio no está en el repo). Su ritmo depende de la distancia a la esfera más cercana, en escala logarítmica, y no cambia con el zoom. Los puntos destellan con cada pitido.</span><span lang="en">Each beep is a "pi-PI": 80 ms at 2130 Hz and 60 ms an octave up, as a triangle wave, measured from a clip of the anime (pitch and timing only; the audio is not in the repo). Its rate follows the distance to the nearest ball on a log scale and does not change with the zoom. The dots flash on every beep.</span></p>
+        <div class="levels" id="beepTable"></div>
+      </div>
+      <div class="card">
+        <h3><span lang="es">El barrido</span><span lang="en">The sweep</span></h3>
+        <p><span lang="es">El radar del anime no tiene línea de barrido; aquí es una opción. Pruébalos en la demo:</span><span lang="en">The anime's radar has no sweep line; here it is an option. Try them in the demo:</span></p>
+        <ol class="steps" style="margin-top:10px">
+          <li><span lang="es"><b>Aguja</b> (<code>line</code>): gira una vez cada 2.4 s con una estela y enciende cada punto al pasar.</span><span lang="en"><b>Hand</b> (<code>line</code>): turns once every 2.4 s with a trail and lights each dot as it passes.</span></li>
+          <li><span lang="es"><b>Onda</b> (<code>ring</code>): un anillo que crece del centro con cada pitido.</span><span lang="en"><b>Ring</b> (<code>ring</code>): a ring that grows from the centre on every beep.</span></li>
+          <li><span lang="es"><b>Las dos</b> (<code>both</code>) o <b>ninguno</b> (<code>none</code>), solo el parpadeo, como en la serie.</span><span lang="en"><b>Both</b> (<code>both</code>) or <b>none</b> (<code>none</code>), just the blink, as in the show.</span></li>
+        </ol>
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h3><span lang="es">Los sonidos</span><span lang="en">The sounds</span></h3>
+      <p><span lang="es">Sintetizados con los tonos medidos: el «brrr» que tiembla entre 2000 y 2200 Hz suena con cada pulsación, antes del pitido. Pulsa ▶ para oírlos aquí.</span><span lang="en">Synthesised from the measured tones: the "brrr" warbling between 2000 and 2200 Hz plays on every press, before the beep. Press ▶ to hear them here.</span></p>
+      <ul class="sfxlist" id="sfxList"></ul>
+    </div>
+  </section>
+
+  <section class="block" id="controles">
+    <p class="eyebrow"><span lang="es">Controles físicos</span><span lang="en">Physical controls</span></p>
+    <h2><span lang="es">Dos botones, la pantalla táctil y el giroscopio</span><span lang="en">Two buttons, the touch screen and the gyro</span></h2>
+    <div class="grid g2">
+      <div class="card"><h3>BOOT</h3><p><span lang="es">Clic: aleja un nivel (del de 10 km vuelve al de 10 m). Mantener: tarjeta de información con la versión, la placa, la red, la IP y la batería.</span><span lang="en">Click: zoom out one level (from 10 km it wraps back to 10 m). Hold: info card with the version, board, network, IP and battery.</span></p></div>
+      <div class="card"><h3>KEY2</h3><p><span lang="es">Clic: acerca un nivel. Mantener 600 ms: apaga o enciende el radar con su animación.</span><span lang="en">Click: zoom in one level. Hold 600 ms: power the radar off or on with its animation.</span></p><p><span lang="es">Es la tecla de encendido del PMIC AXP2101: mantenerla <b>6 s</b> apaga la placa entera.</span><span lang="en">It is the AXP2101 PMIC's power key: holding it for <b>6 s</b> switches the whole board off.</span></p></div>
+      <div class="card"><h3><span lang="es">Pantalla táctil</span><span lang="en">Touch screen</span></h3><p><span lang="es">Toque: aleja. Doble toque: tarjeta de información. Deslizar a la izquierda o a la derecha: tema siguiente o anterior. Pulsación larga: fija el norte del radar donde apunta ahora.</span><span lang="en">Tap: zoom out. Double tap: info card. Swipe left or right: next or previous theme. Long press: sets the radar's north to where it points now.</span></p></div>
+      <div class="card"><h3><span lang="es">Giroscopio y sonido</span><span lang="en">Gyro and sound</span></h3><p><span lang="es">El QMI8658 sigue el giro de la placa y el mapa rota con él. Cada pulsación suena; el pitido espera a que termine el sonido del botón. El volumen y el silencio se cambian desde el panel, la API o la consola.</span><span lang="en">The QMI8658 tracks the board's rotation and the map turns with it. Every press makes a sound; the beep waits for the button sound to finish. Volume and mute are set from the panel, the API or the console.</span></p></div>
+    </div>
+  </section>
+
+  <section class="block" id="hardware">
+    <p class="eyebrow"><span lang="es">Hardware soportado</span><span lang="en">Supported hardware</span></p>
+    <h2>Waveshare ESP32-S3-Touch-AMOLED-1.75C</h2>
+    <p class="sub"><span lang="es">Una placa redonda con todo lo que necesita un radar: pantalla, táctil, IMU, batería y altavoz. <code>BOARD=amoled</code>, hostname <code>dragonradar.local</code>.</span><span lang="en">A round board with everything a radar needs: screen, touch, IMU, battery and speaker. <code>BOARD=amoled</code>, hostname <code>dragonradar.local</code>.</span></p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th><span lang="es">Parte</span><span lang="en">Part</span></th><th>Chip</th><th><span lang="es">Para qué</span><span lang="en">What for</span></th></tr></thead>
+        <tbody>
+          <tr><td>SoC</td><td>ESP32-S3R8</td><td><span lang="es">8 MB de PSRAM octal y 32 MB de flash; USB-C nativo</span><span lang="en">8 MB octal PSRAM and 32 MB flash; native USB-C</span></td></tr>
+          <tr><td><span lang="es">Pantalla</span><span lang="en">Screen</span></td><td>CO5300</td><td><span lang="es">AMOLED redonda de 1.75", 466×466, por QSPI</span><span lang="en">1.75" round AMOLED, 466×466, over QSPI</span></td></tr>
+          <tr><td><span lang="es">Táctil</span><span lang="en">Touch</span></td><td>CST9217</td><td><span lang="es">Toques, doble toque, deslizar y pulsación larga</span><span lang="en">Taps, double taps, swipes and long presses</span></td></tr>
+          <tr><td>IMU</td><td>QMI8658</td><td><span lang="es">Rumbo del mapa (giroscopio)</span><span lang="en">Map heading (gyro)</span></td></tr>
+          <tr><td>PMIC</td><td>AXP2101</td><td><span lang="es">Batería LiPo, carga y la tecla KEY2</span><span lang="en">LiPo battery, charging and the KEY2 key</span></td></tr>
+          <tr><td><span lang="es">Audio</span><span lang="en">Audio</span></td><td>ES8311 + NS4150B</td><td><span lang="es">Códec y amplificador del altavoz: pitidos y efectos</span><span lang="en">Codec and speaker amplifier: beeps and effects</span></td></tr>
+          <tr><td><span lang="es">Micrófonos</span><span lang="en">Microphones</span></td><td>ES7210</td><td><span lang="es">Dos micrófonos; el firmware los usa para medir su propio altavoz</span><span lang="en">Two microphones; the firmware uses them to measure its own speaker</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block" id="instalar">
+    <p class="eyebrow"><span lang="es">Instalar</span><span lang="en">Install</span></p>
+    <h2><span lang="es">Desde el navegador o con arduino-cli</span><span lang="en">From the browser or with arduino-cli</span></h2>
+    <div class="grid g2">
+      <div class="card">
+        <h3><span lang="es">Instalador web</span><span lang="en">Web installer</span></h3>
+        <ol class="steps">
+          <li><span lang="es">Conecta la placa por USB-C y abre esta página en Chrome o Edge de escritorio.</span><span lang="en">Plug the board in over USB-C and open this page in desktop Chrome or Edge.</span></li>
+          <li><span lang="es">Pulsa <b>Instalar en tu placa</b> y elige el puerto.</span><span lang="en">Press <b>Install on your board</b> and pick the port.</span></li>
+          <li><span lang="es">Al reiniciar, conéctate a la red <code>DragonRadar-XXXX</code> y elige tu WiFi en el portal.</span><span lang="en">After the reboot, join the <code>DragonRadar-XXXX</code> network and pick your WiFi in the portal.</span></li>
+          <li><span lang="es">Abre <code>http://dragonradar.local</code>.</span><span lang="en">Open <code>http://dragonradar.local</code>.</span></li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3><span lang="es">Compilar tú mismo</span><span lang="en">Build it yourself</span></h3>
+        <p><span lang="es">Necesitas <code>arduino-cli</code>, <code>make</code> y Node 18 o superior.</span><span lang="en">You need <code>arduino-cli</code>, <code>make</code> and Node 18 or newer.</span></p>
+<pre><code>git clone __REPO_URL__
+cd __REPO_NAME__
+make deps
+make flash PORT=/dev/cu.usbmodemXXXX
+make monitor   # 'help'</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="dentro">
+    <p class="eyebrow"><span lang="es">Por dentro</span><span lang="en">Internals</span></p>
+    <h2><span lang="es">Arquitectura, API, MCP y cómo contribuir</span><span lang="en">Architecture, API, MCP and contributing</span></h2>
+    <div class="grid g3" style="margin-bottom:18px">
+      <div class="card"><h3>Firmware</h3><p><span lang="es">Sketch de Arduino (core esp32 3.2.0). El radar se dibuja en un canvas de 466×466 en PSRAM con Arduino_GFX y se vuelca entero al CO5300.</span><span lang="en">Arduino sketch (esp32 core 3.2.0). The radar is drawn on a 466×466 canvas in PSRAM with Arduino_GFX and flushed whole to the CO5300.</span></p></div>
+      <div class="card"><h3><span lang="es">Fuente única</span><span lang="en">Single source</span></h3><p><span lang="es"><code>shared/*.json</code> genera <code>radar_assets.h</code> y <code>sounds.h</code>. <code>tools/preview/renderer.js</code> dibuja la vista previa, el panel y esta demo. <code>make check</code> falla si algo se desincroniza.</span><span lang="en"><code>shared/*.json</code> generates <code>radar_assets.h</code> and <code>sounds.h</code>. <code>tools/preview/renderer.js</code> draws the preview, the panel and this demo. <code>make check</code> fails if anything drifts.</span></p></div>
+      <div class="card"><h3><span lang="es">Fan, no oficial</span><span lang="en">Fan-made, unofficial</span></h3><p><span lang="es">Los colores y medidas salen de fotogramas medidos y de las wikis; los gráficos se dibujan con código y los sonidos se sintetizan. Detalles y fuentes en <code>docs/design.md</code>.</span><span lang="en">Colours and sizes come from measured frames and the wikis; the graphics are drawn in code and the sounds are synthesised. Details and sources in <code>docs/design.md</code>.</span></p></div>
+    </div>
+    <div class="tablewrap" style="margin-bottom:18px">
+      <table>
+        <thead><tr><th><span lang="es">Ruta</span><span lang="en">Route</span></th><th><span lang="es">Qué hace</span><span lang="en">What it does</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET /api/state</code></td><td><span lang="es">Encendido, escala, rumbo, tema, barrido, volumen, esferas, la más cercana y el intervalo del pitido</span><span lang="en">Power, scale, heading, theme, sweep, volume, balls, the nearest one and the beep interval</span></td></tr>
+          <tr><td><code>POST /api/radar</code></td><td><code>{zoom, theme, sweep, volume, muted, power, resetHeading}</code></td></tr>
+          <tr><td><code>POST /api/balls</code></td><td><span lang="es">Hasta 7 esferas <code>{stars, bearingDeg, distanceM}</code>, o <code>{demo: true}</code></span><span lang="en">Up to 7 balls <code>{stars, bearingDeg, distanceM}</code>, or <code>{demo: true}</code></span></td></tr>
+          <tr><td><code>POST /api/sfx</code></td><td><span lang="es">Toca un sonido: <code>{name}</code></span><span lang="en">Plays a sound: <code>{name}</code></span></td></tr>
+          <tr><td><code>GET /api/info</code></td><td><span lang="es">Placa, firmware, red y límites</span><span lang="en">Board, firmware, network and limits</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="grid g2">
+      <div class="card">
+        <h3>MCP</h3>
+        <p><span lang="es">Claude u otro cliente MCP maneja el radar con <code>get_state</code>, <code>set_radar</code>, <code>set_balls</code> (rumbo en grados o como «NE», distancia como «1.5 km») y <code>play_sfx</code>. Instala las dependencias con <code>make mcp-install</code>.</span><span lang="en">Claude or any MCP client drives the radar with <code>get_state</code>, <code>set_radar</code>, <code>set_balls</code> (bearing in degrees or as "NE", distance as "1.5 km") and <code>play_sfx</code>. Install the dependencies with <code>make mcp-install</code>.</span></p>
+<pre><code>{ "mcpServers": { "dragon-radar": {
+  "command": "node", "args": ["mcp/server.mjs"],
+  "env": { "DRAGONRADAR_HOSTS": "dragonradar.local" } } } }</code></pre>
+      </div>
+      <div class="card">
+        <h3><span lang="es">Contribuir</span><span lang="en">Contributing</span></h3>
+        <p><span lang="es">Código, comentarios y commits en inglés; documentos en español. Antes de un PR: <code>make check</code> y <code>make build</code>. Para cambios visuales, adjunta una captura real con <code>make shot</code>. Un tema, un barrido o un sonido nuevo va en <code>shared/</code>, en el firmware, en el MCP y en esta página; <code>make check</code> compara las listas.</span><span lang="en">Code, comments and commits in English; documents in Spanish. Before a PR: <code>make check</code> and <code>make build</code>. For visual changes, attach a real capture from <code>make shot</code>. A new theme, sweep mode or sound goes in <code>shared/</code>, the firmware, the MCP and this page; <code>make check</code> compares the lists.</span></p>
+<pre><code>make check
+make build
+make shot PORT=/dev/cu.usbmodemXXXX</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="autor">
+    <p class="eyebrow"><span lang="es">Quién hay detrás</span><span lang="en">Who is behind this</span></p>
+    <h2><span lang="es">Hecho por adrianmb. Si te gusta Dragon Radar, hay más.</span><span lang="en">Made by adrianmb. If you like Dragon Radar, there is more.</span></h2>
+    <p class="sub">
+      <span lang="es">Firmware para placas baratas, herramientas pequeñas y proyectos de software libre. Todo se publica primero en adrianmb.dev.</span>
+      <span lang="en">Firmware for cheap boards, small tools and free-software projects. Everything is published first on adrianmb.dev.</span>
+    </p>
+    <div class="ctas">
+      <a class="btn primary" href="https://adrianmb.dev/"><span lang="es" class="inl">Seguir en adrianmb.dev</span><span lang="en" class="inl">Follow on adrianmb.dev</span></a>
+      <a class="btn" href="https://github.com/Adrianmtzb"><span lang="es" class="inl">Seguir en GitHub</span><span lang="en" class="inl">Follow on GitHub</span></a>
+    </div>
+    <a class="tip" href="https://orbi.finance/app/orbi-pay?orbiId=A000001&amp;amount=1.00&amp;asset=USDT&amp;concept=thanks-dragonradar" target="_blank" rel="noopener">
+      <svg class="qr" viewBox="0 0 45 45" role="img" shape-rendering="crispEdges" aria-label="QR"><rect width="45" height="45" fill="#fff"/><path fill="#000" d="M2 2h7v1h-7zM13 2h3v1h-3zM21 2h2v1h-2zM25 2h1v1h-1zM28 2h3v1h-3zM33 2h2v1h-2zM36 2h7v1h-7zM2 3h1v1h-1zM8 3h1v1h-1zM11 3h1v1h-1zM13 3h2v1h-2zM16 3h3v1h-3zM20 3h1v1h-1zM22 3h1v1h-1zM24 3h1v1h-1zM26 3h2v1h-2zM29 3h4v1h-4zM34 3h1v1h-1zM36 3h1v1h-1zM42 3h1v1h-1zM2 4h1v1h-1zM4 4h3v1h-3zM8 4h1v1h-1zM10 4h1v1h-1zM14 4h3v1h-3zM22 4h1v1h-1zM25 4h1v1h-1zM29 4h2v1h-2zM32 4h1v1h-1zM36 4h1v1h-1zM38 4h3v1h-3zM42 4h1v1h-1zM2 5h1v1h-1zM4 5h3v1h-3zM8 5h1v1h-1zM10 5h2v1h-2zM16 5h1v1h-1zM18 5h1v1h-1zM20 5h1v1h-1zM23 5h2v1h-2zM27 5h2v1h-2zM30 5h2v1h-2zM34 5h1v1h-1zM36 5h1v1h-1zM38 5h3v1h-3zM42 5h1v1h-1zM2 6h1v1h-1zM4 6h3v1h-3zM8 6h1v1h-1zM10 6h1v1h-1zM12 6h2v1h-2zM16 6h1v1h-1zM21 6h3v1h-3zM25 6h2v1h-2zM31 6h4v1h-4zM36 6h1v1h-1zM38 6h3v1h-3zM42 6h1v1h-1zM2 7h1v1h-1zM8 7h1v1h-1zM10 7h1v1h-1zM12 7h6v1h-6zM20 7h1v1h-1zM22 7h1v1h-1zM26 7h4v1h-4zM31 7h1v1h-1zM34 7h1v1h-1zM36 7h1v1h-1zM42 7h1v1h-1zM2 8h7v1h-7zM10 8h1v1h-1zM12 8h1v1h-1zM14 8h1v1h-1zM16 8h1v1h-1zM18 8h1v1h-1zM20 8h1v1h-1zM22 8h1v1h-1zM24 8h1v1h-1zM26 8h1v1h-1zM28 8h1v1h-1zM30 8h1v1h-1zM32 8h1v1h-1zM34 8h1v1h-1zM36 8h7v1h-7zM10 9h2v1h-2zM17 9h1v1h-1zM20 9h1v1h-1zM23 9h2v1h-2zM26 9h1v1h-1zM29 9h2v1h-2zM33 9h2v1h-2zM2 10h1v1h-1zM4 10h5v1h-5zM12 10h1v1h-1zM14 10h1v1h-1zM16 10h1v1h-1zM19 10h2v1h-2zM22 10h1v1h-1zM24 10h1v1h-1zM26 10h4v1h-4zM31 10h1v1h-1zM33 10h1v1h-1zM36 10h5v1h-5zM2 11h5v1h-5zM9 11h2v1h-2zM12 11h2v1h-2zM19 11h5v1h-5zM25 11h1v1h-1zM27 11h1v1h-1zM30 11h1v1h-1zM33 11h2v1h-2zM36 11h1v1h-1zM38 11h1v1h-1zM40 11h3v1h-3zM4 12h1v1h-1zM7 12h6v1h-6zM14 12h1v1h-1zM17 12h2v1h-2zM23 12h1v1h-1zM26 12h1v1h-1zM28 12h2v1h-2zM31 12h2v1h-2zM34 12h3v1h-3zM2 13h2v1h-2zM5 13h1v1h-1zM7 13h1v1h-1zM9 13h1v1h-1zM11 13h1v1h-1zM14 13h1v1h-1zM16 13h3v1h-3zM23 13h1v1h-1zM25 13h1v1h-1zM28 13h1v1h-1zM30 13h1v1h-1zM32 13h3v1h-3zM36 13h2v1h-2zM39 13h1v1h-1zM41 13h1v1h-1zM2 14h3v1h-3zM8 14h2v1h-2zM11 14h1v1h-1zM14 14h4v1h-4zM19 14h1v1h-1zM25 14h2v1h-2zM28 14h1v1h-1zM30 14h2v1h-2zM33 14h2v1h-2zM39 14h2v1h-2zM3 15h1v1h-1zM6 15h2v1h-2zM9 15h3v1h-3zM15 15h2v1h-2zM20 15h1v1h-1zM22 15h3v1h-3zM26 15h1v1h-1zM30 15h1v1h-1zM32 15h3v1h-3zM36 15h3v1h-3zM42 15h1v1h-1zM2 16h1v1h-1zM7 16h2v1h-2zM10 16h4v1h-4zM17 16h1v1h-1zM20 16h2v1h-2zM26 16h1v1h-1zM28 16h2v1h-2zM31 16h2v1h-2zM35 16h1v1h-1zM38 16h1v1h-1zM40 16h1v1h-1zM2 17h1v1h-1zM7 17h1v1h-1zM11 17h3v1h-3zM15 17h1v1h-1zM18 17h1v1h-1zM20 17h7v1h-7zM28 17h1v1h-1zM30 17h1v1h-1zM34 17h1v1h-1zM36 17h1v1h-1zM38 17h2v1h-2zM41 17h2v1h-2zM3 18h3v1h-3zM8 18h2v1h-2zM11 18h3v1h-3zM15 18h1v1h-1zM17 18h1v1h-1zM19 18h1v1h-1zM21 18h1v1h-1zM24 18h1v1h-1zM26 18h1v1h-1zM28 18h1v1h-1zM30 18h2v1h-2zM35 18h1v1h-1zM37 18h1v1h-1zM40 18h1v1h-1zM42 18h1v1h-1zM3 19h5v1h-5zM9 19h2v1h-2zM12 19h3v1h-3zM16 19h1v1h-1zM18 19h2v1h-2zM21 19h3v1h-3zM25 19h2v1h-2zM28 19h1v1h-1zM33 19h2v1h-2zM36 19h4v1h-4zM41 19h2v1h-2zM2 20h1v1h-1zM4 20h2v1h-2zM8 20h2v1h-2zM11 20h1v1h-1zM14 20h1v1h-1zM16 20h4v1h-4zM22 20h2v1h-2zM26 20h1v1h-1zM29 20h1v1h-1zM32 20h1v1h-1zM35 20h1v1h-1zM38 20h1v1h-1zM2 21h3v1h-3zM10 21h3v1h-3zM16 21h1v1h-1zM18 21h4v1h-4zM23 21h2v1h-2zM28 21h3v1h-3zM33 21h2v1h-2zM38 21h1v1h-1zM41 21h2v1h-2zM2 22h7v1h-7zM10 22h3v1h-3zM15 22h1v1h-1zM17 22h1v1h-1zM23 22h1v1h-1zM27 22h3v1h-3zM31 22h1v1h-1zM39 22h3v1h-3zM2 23h2v1h-2zM9 23h2v1h-2zM13 23h15v1h-15zM30 23h1v1h-1zM32 23h3v1h-3zM36 23h3v1h-3zM40 23h3v1h-3zM3 24h1v1h-1zM5 24h1v1h-1zM8 24h1v1h-1zM11 24h2v1h-2zM15 24h1v1h-1zM19 24h1v1h-1zM23 24h2v1h-2zM26 24h1v1h-1zM29 24h4v1h-4zM34 24h2v1h-2zM5 25h1v1h-1zM7 25h1v1h-1zM9 25h1v1h-1zM11 25h1v1h-1zM13 25h2v1h-2zM16 25h1v1h-1zM21 25h4v1h-4zM26 25h1v1h-1zM28 25h2v1h-2zM32 25h4v1h-4zM37 25h1v1h-1zM39 25h1v1h-1zM41 25h2v1h-2zM3 26h2v1h-2zM7 26h2v1h-2zM11 26h1v1h-1zM15 26h2v1h-2zM18 26h2v1h-2zM22 26h1v1h-1zM26 26h3v1h-3zM31 26h1v1h-1zM33 26h1v1h-1zM35 26h1v1h-1zM40 26h2v1h-2zM4 27h4v1h-4zM9 27h1v1h-1zM13 27h1v1h-1zM16 27h1v1h-1zM18 27h6v1h-6zM25 27h1v1h-1zM32 27h2v1h-2zM36 27h1v1h-1zM38 27h2v1h-2zM42 27h1v1h-1zM2 28h1v1h-1zM4 28h3v1h-3zM8 28h1v1h-1zM10 28h2v1h-2zM13 28h1v1h-1zM17 28h1v1h-1zM19 28h1v1h-1zM22 28h2v1h-2zM29 28h4v1h-4zM34 28h2v1h-2zM37 28h2v1h-2zM2 29h2v1h-2zM5 29h2v1h-2zM11 29h1v1h-1zM13 29h1v1h-1zM15 29h1v1h-1zM17 29h1v1h-1zM23 29h1v1h-1zM26 29h1v1h-1zM28 29h2v1h-2zM32 29h3v1h-3zM36 29h1v1h-1zM38 29h2v1h-2zM2 30h2v1h-2zM6 30h1v1h-1zM8 30h2v1h-2zM15 30h2v1h-2zM19 30h1v1h-1zM22 30h1v1h-1zM27 30h1v1h-1zM31 30h1v1h-1zM33 30h1v1h-1zM35 30h1v1h-1zM37 30h1v1h-1zM39 30h2v1h-2zM42 30h1v1h-1zM2 31h2v1h-2zM5 31h3v1h-3zM10 31h1v1h-1zM12 31h2v1h-2zM24 31h2v1h-2zM28 31h1v1h-1zM30 31h1v1h-1zM32 31h7v1h-7zM40 31h3v1h-3zM2 32h1v1h-1zM4 32h5v1h-5zM14 32h3v1h-3zM18 32h1v1h-1zM22 32h1v1h-1zM24 32h1v1h-1zM27 32h1v1h-1zM29 32h4v1h-4zM34 32h6v1h-6zM2 33h1v1h-1zM5 33h1v1h-1zM7 33h1v1h-1zM10 33h1v1h-1zM13 33h2v1h-2zM16 33h1v1h-1zM18 33h1v1h-1zM20 33h1v1h-1zM23 33h2v1h-2zM26 33h1v1h-1zM28 33h1v1h-1zM30 33h1v1h-1zM34 33h4v1h-4zM2 34h1v1h-1zM5 34h2v1h-2zM8 34h5v1h-5zM14 34h3v1h-3zM19 34h2v1h-2zM24 34h1v1h-1zM28 34h1v1h-1zM30 34h2v1h-2zM33 34h6v1h-6zM40 34h1v1h-1zM10 35h2v1h-2zM13 35h2v1h-2zM16 35h1v1h-1zM18 35h1v1h-1zM21 35h2v1h-2zM30 35h1v1h-1zM32 35h1v1h-1zM34 35h1v1h-1zM38 35h3v1h-3zM42 35h1v1h-1zM2 36h7v1h-7zM11 36h1v1h-1zM13 36h1v1h-1zM16 36h3v1h-3zM20 36h1v1h-1zM24 36h1v1h-1zM26 36h1v1h-1zM28 36h4v1h-4zM33 36h2v1h-2zM36 36h1v1h-1zM38 36h2v1h-2zM2 37h1v1h-1zM8 37h1v1h-1zM10 37h1v1h-1zM18 37h1v1h-1zM21 37h2v1h-2zM29 37h2v1h-2zM34 37h1v1h-1zM38 37h1v1h-1zM42 37h1v1h-1zM2 38h1v1h-1zM4 38h3v1h-3zM8 38h1v1h-1zM10 38h1v1h-1zM15 38h3v1h-3zM20 38h2v1h-2zM23 38h2v1h-2zM27 38h3v1h-3zM31 38h1v1h-1zM34 38h7v1h-7zM42 38h1v1h-1zM2 39h1v1h-1zM4 39h3v1h-3zM8 39h1v1h-1zM10 39h2v1h-2zM13 39h3v1h-3zM17 39h1v1h-1zM19 39h1v1h-1zM21 39h1v1h-1zM25 39h3v1h-3zM29 39h2v1h-2zM32 39h1v1h-1zM35 39h1v1h-1zM37 39h1v1h-1zM41 39h2v1h-2zM2 40h1v1h-1zM4 40h3v1h-3zM8 40h1v1h-1zM10 40h3v1h-3zM17 40h3v1h-3zM22 40h1v1h-1zM24 40h1v1h-1zM26 40h7v1h-7zM35 40h5v1h-5zM2 41h1v1h-1zM8 41h1v1h-1zM11 41h1v1h-1zM14 41h2v1h-2zM18 41h1v1h-1zM23 41h2v1h-2zM26 41h1v1h-1zM29 41h1v1h-1zM32 41h5v1h-5zM38 41h2v1h-2zM41 41h1v1h-1zM2 42h7v1h-7zM10 42h5v1h-5zM18 42h3v1h-3zM24 42h1v1h-1zM26 42h3v1h-3zM31 42h1v1h-1zM37 42h2v1h-2zM40 42h1v1h-1z"/></svg>
+      <p><span lang="es">¿Te fue útil? Si quieres, invítame un transistor para seguir con estos proyectos.<small>1 USDT con Orbi Pay · escanea o toca</small></span><span lang="en">Found it useful? If you like, buy me a transistor to keep these projects going.<small>1 USDT via Orbi Pay · scan or tap</small></span></p>
+    </a>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <p>
+        <span lang="es">Dragon Radar es software libre bajo licencia MIT. El código y esta página están en <a href="__REPO_URL__">GitHub</a>; las contribuciones son bienvenidas. Hecho por <a href="https://adrianmb.dev/">adrianmb</a>.</span>
+        <span lang="en">Dragon Radar is free software under the MIT license. The code and this page are on <a href="__REPO_URL__">GitHub</a>; contributions are welcome. Made by <a href="https://adrianmb.dev/">adrianmb</a>.</span>
+      </p>
+      <p class="legal">
+        <span lang="es">Proyecto de fans, sin afiliación con los titulares de los derechos de Dragon Ball, cuyos nombres y marcas son de sus respectivos propietarios. No usa arte ni audio con copyright: todos los gráficos son originales y se dibujan con código, y todos los sonidos se sintetizan. Waveshare y Espressif se nombran solo para indicar compatibilidad; tampoco hay afiliación con ellos.</span>
+        <span lang="en">Fan project, not affiliated with the rights holders of Dragon Ball, whose names and marks belong to their respective owners. No copyrighted artwork or audio is used: every graphic is original and drawn in code, and every sound is synthesised. Waveshare and Espressif are named only to indicate compatibility; there is no affiliation with them either.</span>
+      </p>
+    </div>
+    <span class="ver" id="verFoot"></span>
+  </div>
+</footer>
+
+<!-- The radar renderer shared with the preview and the board's panel: make site copies
+     tools/preview/renderer.js next to this page (SITE_EXTRA in the Makefile). -->
+<script src="renderer.js"></script>
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } },
+};
+
+// ------------------------------------------------------------------ language & light/dark
+(function initLang() {
+  const q = new URLSearchParams(location.search).get('lang');
+  let lang = q === 'es' || q === 'en' ? q : store.get('dr-lang');
+  if (lang !== 'es' && lang !== 'en') lang = 'es';  // Spanish unless the visitor picked English
+  document.documentElement.lang = lang;
+  $('langBtn').addEventListener('click', () => {
+    const next = document.documentElement.lang === 'es' ? 'en' : 'es';
+    document.documentElement.lang = next;
+    store.set('dr-lang', next);
+  });
+})();
+(function initScheme() {
+  const t = store.get('dr-scheme');
+  if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+  $('themeBtn').addEventListener('click', () => {
+    const cur = document.documentElement.dataset.theme ||
+      (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+    const next = cur === 'light' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = next;
+    store.set('dr-scheme', next);
+  });
+})();
+if (!('serial' in navigator)) document.body.classList.add('unsupported');
+
+fetch('manifest.json').then((r) => r.json()).then((m) => {
+  $('ver').textContent = 'v' + m.version;
+  $('verFoot').textContent = 'Dragon Radar v' + m.version;
+}).catch(() => {});
+
+// Bilingual node: <span lang=es>…</span><span lang=en>…</span>, built without innerHTML.
+function bi(es, en, inline) {
+  const f = document.createDocumentFragment();
+  for (const [l, t] of [['es', es], ['en', en]]) {
+    const s = document.createElement('span');
+    s.lang = l; s.textContent = t;
+    if (inline) s.className = 'inl';
+    f.append(s);
+  }
+  return f;
+}
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+
+// ------------------------------------------------------------------ names shown by this page
+// The same lists as shared/radar.json, shared/sounds.json, the firmware and the MCP, in the same
+// order: tools/check_consistency.mjs compares them. Each needs its labels below.
+const THEMES = ['z', 'classic', 'ptp'];
+const SWEEP_MODES = ['line', 'ring', 'both', 'none'];
+const ZOOM_LABELS = ['10 m', '100 m', '1 km', '10 km'];
+const SFX = ['power_on', 'radar_beep', 'zoom_out', 'button', 'zoom_in', 'ball_close', 'ball_found', 'power_off'];
+const SWEEP_TEXT = { line: ['aguja', 'hand'], ring: ['onda', 'ring'], both: ['las dos', 'both'], none: ['ninguno', 'none'] };
+const SFX_TEXT = {
+  power_on: ['encender', 'power on'], radar_beep: ['pitido', 'beep'], zoom_out: ['alejar', 'zoom out'], button: ['botón', 'button'],
+  zoom_in: ['acercar', 'zoom in'], ball_close: ['cerca', 'close'], ball_found: ['encontrada', 'found'], power_off: ['apagar', 'power off'],
+};
+
+function fmtM(m, lang) {
+  const dec = (v, d) => v.toFixed(d);
+  if (m >= 1000) return (m >= 10000 ? Math.round(m / 1000) : dec(m / 1000, m % 1000 ? 1 : 0)) + ' km';
+  return Math.round(m) + ' m';
+}
+
+// ------------------------------------------------------------------ demo
+Promise.all([
+  fetch('shared/radar.json').then((r) => r.json()),
+  fetch('shared/sounds.json').then((r) => r.json()),
+]).then(([RADAR, SOUNDS]) => start(RADAR, SOUNDS)).catch((e) => {
+  console.warn('demo disabled:', e);
+  $('demo').classList.add('failed');
+});
+
+function start(RADAR, SOUNDS) {
+  if (typeof createRadarRenderer !== 'function') throw new Error('renderer.js missing');
+  const LEVELS = RADAR.zoom.levels;
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  // Prefer the shared data if it ever disagrees with the lists above (make check would fail too).
+  const themes = Object.keys(RADAR.themes), sweeps = RADAR.sweep.modes;
+
+  // Crisp on high-density screens: the renderer draws everything relative to canvas.width.
+  const canvas = $('radar');
+  const px = Math.round(RADAR.refSizePx * Math.min(2, window.devicePixelRatio || 1));
+  canvas.width = canvas.height = px;
+  const RENDER = createRadarRenderer(canvas, RADAR);
+
+  const S = {
+    theme: themes.includes(store.get('dr-radar-theme')) ? store.get('dr-radar-theme') : RADAR.theme,
+    sweep: sweeps.includes(store.get('dr-sweep')) ? store.get('dr-sweep') : RADAR.sweep.mode,
+    zoom: RADAR.zoom.default, zoomFrom: null, zoomStart: 0,
+    heading: 0, distScale: 1,
+    power: 'on', bootStart: -1e9, offStart: 0,
+    blinkAt: -1e9, labelAt: -1e9, lastBeep: -1e9,
+    closeArmed: true, foundArmed: true,
+    pressUntil: -1e9, pending: null,
+    volume: 60, sound: store.get('dr-sound') === '1',
+  };
+  const balls = () => RADAR.demo.balls.map((b) => ({ ...b, distanceM: b.distanceM * S.distScale }));
+  const nearestM = () => Math.min(...balls().map((b) => b.distanceM));
+  function beepIntervalMs(d) {
+    const b = SOUNDS.beep, lf = Math.log10(b.farM), ln = Math.log10(b.nearM);
+    const t = clamp01((lf - Math.log10(Math.max(d, 1e-3))) / (lf - ln));
+    return Math.round(b.maxIntervalMs + (b.minIntervalMs - b.maxIntervalMs) * Math.pow(t, b.curvePow));
+  }
+
+  // ---- page colours follow the radar theme
+  function paint() {
+    const P = RADAR.themes[S.theme], r = document.documentElement.style;
+    for (const [v, k] of [['screen', 'screen'], ['center', 'screenCenter'], ['edge', 'screenEdge'], ['grid', 'grid'],
+      ['glow', 'ballGlow'], ['core', 'ballCore'], ['marker', 'marker'], ['ping', 'ping']]) r.setProperty(`--t-${v}`, P[k]);
+  }
+
+  // ---- sound: WebAudio, created only from a user click (the Sound button or a ▶)
+  let AC = null, master = null, active = [];
+  function audio() {
+    if (!AC) {
+      try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; }
+      master = AC.createGain(); master.gain.value = 0.3; master.connect(AC.destination);
+    }
+    if (AC.state === 'suspended') AC.resume();
+    return AC;
+  }
+  function parseNotes(notes) {
+    const out = []; let wave = 'square';
+    for (const tok of notes.trim().split(/[\s,|]+/)) {
+      if (tok[0] === '~') { wave = tok.slice(1); continue; }
+      const m = /^(R|r|\d+):(\d+)$/.exec(tok);
+      if (m) out.push({ hz: /r/i.test(m[1]) ? 0 : +m[1], ms: +m[2], wave });
+    }
+    return out;
+  }
+  const sfxOf = (name) => SOUNDS.sfx.find((x) => x.name === name);
+  const sfxMs = (name) => parseNotes((sfxOf(name) || { notes: '' }).notes).reduce((a, t) => a + t.ms, 0);
+  // Level curve of sounds.json synth: levelAt100 x 10^(-rangeDb x (1 - v/100)^curveShape / 20).
+  function levelAt(v) {
+    const y = SOUNDS.synth;
+    if (v <= 0) return 0;
+    if (y.rangeDb === undefined) return y.levelAt100 * (v / 100) ** 2;
+    return y.levelAt100 * Math.pow(10, (-y.rangeDb * Math.pow(1 - v / 100, y.curveShape ?? 1)) / 20);
+  }
+  // As sound.cpp: an effect replaces the one playing; tones are legato with short ramps.
+  function playSfx(name, force) {
+    const s = sfxOf(name);
+    if (!s || (!S.sound && !force) || !AC) return;
+    for (const o of active) { try { o.stop(); } catch (e) {} }
+    active = [];
+    const level = levelAt((S.volume * (s.gain ?? 100)) / 100);
+    if (level <= 0) return;
+    const ramp = SOUNDS.synth.rampMs / 1000;
+    let t = AC.currentTime + 0.01;
+    for (const tone of parseNotes(s.notes)) {
+      const d = tone.ms / 1000;
+      if (tone.hz) {
+        const o = AC.createOscillator(), g = AC.createGain();
+        o.type = tone.wave === 'tri' ? 'triangle' : tone.wave; o.frequency.value = tone.hz;
+        g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(level, t + ramp);
+        g.gain.setValueAtTime(level, t + Math.max(ramp, d - ramp)); g.gain.linearRampToValueAtTime(0, t + d);
+        o.connect(g).connect(master); o.start(t); o.stop(t + d + 0.01);
+        active.push(o);
+      }
+      t += d;
+    }
+  }
+
+  // ---- behaviour (the state machine of tools/preview/index.html, which mirrors the firmware)
+  function pressSound(name, now) { playSfx(name); S.pressUntil = now + sfxMs(name); }
+  function zoomTo(i, sfx, now) {
+    if (S.power !== 'on') return;
+    if (i === S.zoom) return pressSound('button', now);
+    S.zoomFrom = S.zoom; S.zoom = i; S.zoomStart = now; S.labelAt = now;
+    pressSound(sfx, now);
+  }
+  function zoomOut(now) {
+    if (S.zoom < LEVELS.length - 1) zoomTo(S.zoom + 1, 'zoom_out', now);
+    else zoomTo(RADAR.zoom.wrap ? 0 : S.zoom, 'zoom_in', now);
+  }
+  const zoomIn = (now) => (S.zoom > 0 ? zoomTo(S.zoom - 1, 'zoom_in', now) : RADAR.zoom.wrap && zoomTo(RADAR.zoom.levels.length - 1, 'zoom_out', now));
+  function setTheme(t) { S.theme = t; store.set('dr-radar-theme', t); paint(); syncChips(); }
+  function setSweep(m) { S.sweep = m; store.set('dr-sweep', m); syncChips(); }
+  function stepTheme(dir, now) { setTheme(themes[(themes.indexOf(S.theme) + dir + themes.length) % themes.length]); pressSound('button', now); }
+  function setHeading(v) { S.heading = ((Math.round(v) % 360) + 360) % 360; $('turn').value = S.heading; }
+  function boot(now) {
+    S.power = 'boot'; S.bootStart = now; S.zoomFrom = null;
+    S.closeArmed = S.foundArmed = true; S.lastBeep = -1e9;
+    playSfx(RADAR.boot.sfx);
+  }
+  function powerToggle(now) {
+    hideInfo();
+    if (S.power === 'off') return boot(now);
+    if (S.power === 'on' || S.power === 'boot') { S.power = 'powering_off'; S.offStart = now; playSfx(RADAR.transitions.powerOff.sfx); }
+  }
+
+  // Info card (BOOT hold or double tap): closed by any press, or on its own after 10 s.
+  const info = $('info');
+  let infoUntil = 0;
+  function showInfo(now) {
+    info.replaceChildren(el('b', '', 'Dragon Radar'), el('span', '', $('ver').textContent || ''),
+      el('small', '', 'Waveshare ESP32-S3-Touch-AMOLED-1.75C'), el('span', '', 'adrianmb.dev'),
+      el('small', '', document.documentElement.lang === 'es' ? 'toca para cerrar' : 'tap to close'));
+    info.classList.add('show'); infoUntil = now + 10000;
+    pressSound('button', now);
+  }
+  function hideInfo() { info.classList.remove('show'); infoUntil = 0; }
+  // Returns true when the press only closed the card, as on the board.
+  function closedInfo(now) { if (!infoUntil) return false; hideInfo(); pressSound('button', now); return true; }
+
+  const INPUT = {
+    bootClick: (now) => closedInfo(now) || zoomOut(now),
+    bootHold: (now) => closedInfo(now) || (S.power === 'on' && showInfo(now)),
+    key2Click: (now) => closedInfo(now) || zoomIn(now),
+    key2Hold: (now) => { closedInfo(now); pressSound('button', now); S.pending = { at: now + sfxMs('button'), fn: powerToggle }; },
+    tap: (now) => closedInfo(now) || zoomOut(now),
+    doubleTap: (now) => S.power === 'on' && showInfo(now),
+    swipe: (dir, now) => closedInfo(now) || (S.power === 'on' && stepTheme(dir, now)),
+    longPress: (now) => closedInfo(now) || (S.power === 'on' && (setHeading(0), pressSound('button', now))),
+  };
+
+  // ---- frame loop
+  let lastText = '';
+  function readout(d, iv) {
+    const lang = document.documentElement.lang, L = LEVELS[S.zoom];
+    const txt = S.power === 'off' ? (lang === 'es' ? 'apagado · mantén KEY2' : 'off · hold KEY2')
+      : lang === 'es' ? `${L.label} por celda · esfera más cercana a ${fmtM(d, lang)} · un pitido cada ${iv} ms`
+        : `${L.label} per cell · nearest ball ${fmtM(d, lang)} away · a beep every ${iv} ms`;
+    if (txt !== lastText) $('readout').textContent = lastText = txt;
+  }
+  function step(now) {
+    if (S.pending && now >= S.pending.at) { const p = S.pending; S.pending = null; p.fn(now); }
+    if (infoUntil && now > infoUntil) hideInfo();
+    let bootT = null, offT = null;
+    if (S.power === 'boot') { bootT = now - S.bootStart; if (bootT >= RADAR.boot.durationMs) { S.power = 'on'; bootT = null; } }
+    if (S.power === 'powering_off') { offT = now - S.offStart; if (offT >= RADAR.transitions.powerOff.durationMs) S.power = 'off'; }
+    const d = nearestM(), iv = beepIntervalMs(d);
+    if (S.power === 'on' && now >= S.pressUntil) {
+      const B = SOUNDS.beep;
+      let sfx = null;
+      if (S.foundArmed && d <= B.foundM) { S.foundArmed = false; S.closeArmed = false; sfx = B.foundSfx; }
+      else if (S.closeArmed && d <= B.closeM) { S.closeArmed = false; sfx = B.closeSfx; }
+      if (d > B.foundM * B.rearmFactor) S.foundArmed = true;
+      if (d > B.closeM * B.rearmFactor) S.closeArmed = true;
+      if (sfx) { playSfx(sfx); S.lastBeep = S.blinkAt = now; }
+      else if (now - S.lastBeep >= iv) { S.lastBeep = S.blinkAt = now; playSfx(B.sfx); }
+    }
+    readout(d, iv);
+    let zoomFrom = null, zoomP = 1;
+    if (S.zoomFrom !== null) {
+      zoomP = clamp01((now - S.zoomStart) / RADAR.transitions.zoom.durationMs);
+      if (zoomP >= 1) S.zoomFrom = null; else zoomFrom = S.zoomFrom;
+    }
+    RENDER.draw({
+      theme: S.theme, zoom: S.zoom, heading: S.heading, balls: balls(),
+      blink: RENDER.blinkLevel(now - S.blinkAt), zoomFrom, zoomP, bootT, offT,
+      labelAge: now - S.labelAt, sweep: S.sweep, sweepT: now, ringAge: now - S.blinkAt,
+      off: S.power === 'off',
+    });
+  }
+  // Runs only while the demo is on screen and the tab is visible.
+  let visible = true, raf = 0;
+  const loop = (now) => { step(now); raf = visible && !document.hidden ? requestAnimationFrame(loop) : 0; };
+  const resume = () => { if (!raf && visible && !document.hidden) raf = requestAnimationFrame(loop); };
+  if ('IntersectionObserver' in window)
+    new IntersectionObserver((es) => { visible = es[0].isIntersecting; resume(); }).observe(canvas);
+  document.addEventListener('visibilitychange', resume);
+
+  // ---- controls
+  const now = () => performance.now();
+  const RADAR_LONG_MS = 600;  // BUTTON_LONG_PRESS_MS in config.h
+  // A button with the board's timing: release before 600 ms = click, hold 600 ms = long press.
+  function holdButton(btn, onClick, onHold) {
+    let timer = 0, held = false;
+    btn.addEventListener('pointerdown', (e) => {
+      if (e.button) return;
+      btn.setPointerCapture(e.pointerId); btn.classList.add('down'); held = false;
+      timer = setTimeout(() => { held = true; onHold(now()); }, RADAR_LONG_MS);
+    });
+    const up = (fire) => () => {
+      if (!btn.classList.contains('down')) return;
+      btn.classList.remove('down'); clearTimeout(timer);
+      if (fire && !held) onClick(now());
+    };
+    btn.addEventListener('pointerup', up(true));
+    btn.addEventListener('pointercancel', up(false));
+    btn.addEventListener('click', (e) => { if (e.detail === 0) onClick(now()); });  // keyboard
+  }
+  holdButton($('knob'), INPUT.bootClick, INPUT.bootHold);
+  holdButton($('bootBtn'), INPUT.bootClick, INPUT.bootHold);
+  holdButton($('key2Btn'), INPUT.key2Click, INPUT.key2Hold);
+
+  // Touch on the screen: tap (waits 350 ms for a double tap), swipe (40 px, mostly sideways),
+  // long press (600 ms).
+  let down = null, tapTimer = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    down = { x: e.clientX, y: e.clientY, long: false };
+    down.timer = setTimeout(() => { if (down) { down.long = true; INPUT.longPress(now()); } }, RADAR_LONG_MS);
+  });
+  canvas.addEventListener('pointercancel', () => { if (down) clearTimeout(down.timer); down = null; });
+  canvas.addEventListener('pointerup', (e) => {
+    if (!down) return;
+    clearTimeout(down.timer);
+    const dx = e.clientX - down.x, dy = e.clientY - down.y, long = down.long;
+    down = null;
+    if (long) return;
+    if (Math.abs(dx) >= 40 && Math.abs(dx) > Math.abs(dy)) return INPUT.swipe(dx < 0 ? 1 : -1, now());
+    if (tapTimer) { clearTimeout(tapTimer); tapTimer = 0; return INPUT.doubleTap(now()); }
+    tapTimer = setTimeout(() => { tapTimer = 0; INPUT.tap(now()); }, 350);
+  });
+  canvas.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); INPUT.tap(now()); }
+    else if (e.key === 'ArrowLeft') INPUT.swipe(-1, now());
+    else if (e.key === 'ArrowRight') INPUT.swipe(1, now());
+  });
+
+  const soundBtn = $('soundBtn');
+  const syncSound = () => { soundBtn.setAttribute('aria-pressed', String(S.sound)); $('soundState').textContent = S.sound ? 'on' : 'off'; };
+  soundBtn.addEventListener('click', () => {
+    S.sound = !S.sound; store.set('dr-sound', S.sound ? '1' : '0'); syncSound();
+    if (S.sound && audio()) pressSound('button', now());
+  });
+  // With sound remembered as on, the context still waits for the first click on the demo.
+  $('demo').addEventListener('pointerdown', () => { if (S.sound) audio(); }, { capture: true });
+  syncSound();
+
+  const chipsOf = (box, items, label, pick) => {
+    box.replaceChildren(...items.map((k) => {
+      const b = el('button'); b.type = 'button'; b.dataset.k = k;
+      b.append(label(k)); b.addEventListener('click', () => { pick(k); if (S.sound) { audio(); pressSound('button', now()); } });
+      return b;
+    }));
+  };
+  chipsOf($('themeChips'), themes, (k) => document.createTextNode(RADAR.themes[k].label), setTheme);
+  chipsOf($('sweepChips'), sweeps, (k) => bi(...(SWEEP_TEXT[k] || [k, k]), true), setSweep);
+  function syncChips() {
+    for (const b of $('themeChips').children) b.classList.toggle('on', b.dataset.k === S.theme);
+    for (const b of $('sweepChips').children) b.classList.toggle('on', b.dataset.k === S.sweep);
+  }
+  // "Walk closer": scales every distance down to 1/1000, so the beep speeds up and ball 1 is found.
+  $('walk').addEventListener('input', (e) => { S.distScale = Math.pow(10, -e.target.value / 100); });
+  $('turn').addEventListener('input', (e) => setHeading(+e.target.value));
+
+  // ---- the how-it-works section, from the same data
+  $('statBalls').textContent = RADAR.demo.balls.length;
+  $('statZoom').textContent = `${LEVELS[0].label}–${LEVELS[LEVELS.length - 1].label}`;
+  $('statSweep').textContent = sweeps.length;
+  $('statSfx').textContent = SOUNDS.sfx.length;
+  $('levels').replaceChildren(...LEVELS.map((L) => {
+    const r = Math.round(L.cellM / L.pitchR), d = el('div', 'level');
+    d.append(el('b', '', L.label), el('span'));
+    d.lastChild.append(bi(`radio ${fmtM(r, 'es')}`, `radius ${fmtM(r, 'en')}`));
+    return d;
+  }));
+  const dists = [3, 10, 30, 100, 300, 1000, 3000, 10000];
+  // One cell per distance: the nearest ball at that distance -> a beep every N ms.
+  $('beepTable').replaceChildren(...dists.map((m) => {
+    const d = el('div', 'level'), b = el('b'), sp = el('span');
+    b.append(bi(fmtM(m, 'es'), fmtM(m, 'en'), true));
+    sp.append(bi(`un pitido cada ${beepIntervalMs(m)} ms`, `a beep every ${beepIntervalMs(m)} ms`));
+    d.append(b, sp);
+    return d;
+  }));
+  $('sfxList').replaceChildren(...SOUNDS.sfx.map((s) => {
+    const li = el('li'), b = el('button', '', '▶');
+    b.type = 'button'; b.title = s.name;
+    b.setAttribute('aria-label', s.name);
+    b.addEventListener('click', () => { if (audio()) playSfx(s.name, true); });
+    const t = el('div');
+    const names = SFX_TEXT[s.name] || [s.name, s.name];
+    const head = el('div'); head.append(el('code', '', s.name), document.createTextNode(' · '), bi(names[0], names[1], true));
+    const d = el('div', 'd'); d.append(bi(s.es || '', s.en || ''));
+    t.append(head, d);
+    li.append(b, t, el('span', 'ms', `${sfxMs(s.name)} ms`));
+    return li;
+  }));
+
+  paint(); syncChips();
+  boot(now());
+  resume();
+}
+</script>
+</body>
+</html>

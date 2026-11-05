@@ -1,43 +1,701 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark light">
-<title>Dragon Radar</title>
+<title>Radar del Dragón</title>
+<!-- Panel served by the board (tools/gen_web.mjs gzips it into the firmware). It mirrors the
+     radar live from GET /api/state (4 Hz) with the preview's renderer and drives it through the
+     API of docs/api.md. The renderer and the JSON blocks are embedded by tools/preview/build.mjs;
+     edit tools/preview/renderer.js and shared/*.json, not those parts.
+     Development from disk: web/index.html?host=<board IP>. -->
 <style>
-  :root { --bg: #050806; --fg: #e6efe8; --dim: #8a9a8e; --accent: #2bd66b; }
-  @media (prefers-color-scheme: light) { :root { --bg: #f4f7f4; --fg: #102014; --dim: #55655a; } }
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--fg);
-         font: 15px/1.5 system-ui, sans-serif; }
-  main { max-width: 34rem; padding: 2rem; }
-  h1 { margin: 0 0 .25rem; color: var(--accent); }
-  p { color: var(--dim); }
-  pre { background: rgba(127, 127, 127, .12); padding: 1rem; border-radius: 8px; overflow: auto; font-size: 13px; }
+  :root { --bg: #050806; --card: #0d140f; --line: #1f2e23; --fg: #e6efe8; --dim: #8a9a8e; --accent: #2bd66b; --bad: #ff6b5e; }
+  @media (prefers-color-scheme: light) { :root { --bg: #f4f7f4; --card: #fff; --line: #d5ded7; --fg: #102014; --dim: #55655a; --accent: #138a43; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0; font-size: 18px; color: var(--accent); }
+  #conn { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); }
+  #conn.ok { background: var(--accent); } #conn.bad { background: var(--bad); }
+  #host { margin-left: auto; color: var(--dim); font-size: 13px; text-align: right; }
+  main { display: flex; flex-wrap: wrap; gap: 22px; padding: 20px; justify-content: center; align-items: flex-start; }
+  #view { display: grid; gap: 10px; justify-items: center; }
+  #radar { width: min(466px, 92vw); aspect-ratio: 1; border-radius: 50%; background: #000; cursor: crosshair; box-shadow: 0 0 0 10px #d9dbd3, 0 10px 30px #0008; margin: 10px; }
+  #readout { color: var(--dim); font-size: 13px; text-align: center; min-height: 1.4em; }
+  #cards { display: grid; gap: 14px; width: min(430px, 92vw); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 10px; }
+  h2 { margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); font-weight: 600; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row > label { display: flex; gap: 6px; align-items: center; }
+  button, select, input { font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+  button { cursor: pointer; background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  select option { background: var(--card); }
+  input[type=number] { width: 6.5em; padding: 5px 6px; }
+  input[type=range] { flex: 1; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th { text-align: left; font-weight: 500; color: var(--dim); font-size: 12px; padding: 0 4px 4px; }
+  td { padding: 3px 4px; }
+  tr.active td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .hint { color: var(--dim); font-size: 12px; margin: 0; }
+  #toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  #toast.show { opacity: 1; } #toast.bad { border-color: var(--bad); color: var(--bad); }
+  footer { text-align: center; color: var(--dim); font-size: 12px; padding: 0 0 24px; }
+  footer a { color: inherit; }
 </style>
 </head>
 <body>
+<header><span id="conn"></span><h1>Radar del Dragón</h1><span id="host">conectando...</span></header>
 <main>
-  <h1>Dragon Radar</h1>
-  <p>The control panel is on its way. Live state of the board:</p>
-  <pre id="state">loading...</pre>
-  <p><a href="https://adrianmb.dev" style="color: inherit">adrianmb.dev</a></p>
+  <div id="view">
+    <canvas id="radar" width="466" height="466" title="Pulsa para colocar la esfera de la fila elegida"></canvas>
+    <div id="readout"></div>
+  </div>
+  <div id="cards">
+    <section>
+      <h2>Radar</h2>
+      <div class="row">
+        <button id="zIn" title="Acercar">−</button>
+        <select id="zoom" aria-label="Escala"></select>
+        <button id="zOut" title="Alejar">+</button>
+        <button id="power">Apagar</button>
+        <button id="north" title="Fija el norte del radar en la orientación actual">Fijar norte</button>
+      </div>
+      <div class="row">
+        <label>Tema <select id="theme"></select></label>
+        <label>Barrido <select id="sweep"></select></label>
+        <label><input id="muted" type="checkbox"> Silencio</label>
+      </div>
+      <div class="row"><label for="vol">Volumen</label><input id="vol" type="range" min="0" max="100"><span id="volVal"></span></div>
+    </section>
+    <section>
+      <h2>Esferas <span id="mode"></span></h2>
+      <table>
+        <thead><tr><th></th><th>Activa</th><th>Estrellas</th><th>Rumbo (°)</th><th>Distancia (m)</th></tr></thead>
+        <tbody id="slots"></tbody>
+      </table>
+      <p class="hint">Elige una fila y pulsa en el radar para colocar esa esfera a la escala actual.</p>
+      <div class="row">
+        <button id="send">Enviar esferas</button>
+        <button id="demo">Demo</button>
+        <button id="clear">Quitar todas</button>
+      </div>
+    </section>
+    <section>
+      <h2>Sonidos</h2>
+      <div class="row" id="sfx"></div>
+    </section>
+  </div>
 </main>
+<footer><a href="https://adrianmb.dev">adrianmb.dev</a></footer>
+<div id="toast"></div>
+
+<script id="radar-json" type="application/json">
+{"version":1,"refSizePx":466,"theme":"z","themes":{"z":{"label":"Dragon Ball Z (Namek)","background":"#000000","screen":"#0c8a12","screenCenter":"#18a020","screenEdge":"#04620a","rim":"#012603","grid":"#004800","ballCore":"#fffbe5","ballDim":"#c9c98a","ballGlow":"#ecef88","marker":"#e80d07","markerEdge":"#5a0402","digits":"#fffeac","arrow":"#e80d07","text":"#d8f8c0","ping":"#b8f0a0","sheen":"#ffffff","counts":"stars","sweep":"#b8f0a0"},"classic":{"label":"Dragon Ball (1986)","background":"#000000","screen":"#587048","screenCenter":"#627a50","screenEdge":"#3c5030","rim":"#1a2414","grid":"#829c75","ballCore":"#fde46e","ballDim":"#b89a50","ballGlow":"#e89848","marker":"#e80d07","markerEdge":"#5a0402","digits":"#fde46e","arrow":"#e89848","text":"#e8f0d8","ping":"#c8d8b0","sheen":"#ffffff","counts":"stars","sweep":"#e8f0d8"},"ptp":{"label":"The Path to Power (1996)","background":"#000000","screen":"#00a878","screenCenter":"#10b888","screenEdge":"#007a55","rim":"#00301f","grid":"#006a4a","ballCore":"#fff4d0","ballDim":"#c0b090","ballGlow":"#f0d070","marker":"#e02020","markerEdge":"#500808","digits":"#fff4a0","arrow":"#e83030","text":"#d0fff0","ping":"#a0f0d0","sheen":"#ffffff","counts":"stars","sweep":"#a0f0d0"}},"shading":{"midStop":0.55,"rimWidthR":0.035,"sheen":{"enabled":true,"cxR":-0.32,"cyR":-0.48,"rxR":0.52,"ryR":0.26,"angleDeg":-28,"alpha":0.07}},"grid":{"offsetCells":0.5,"rotateWithHeading":false},"zoom":{"default":1,"wrap":true,"levels":[{"cellM":10,"pitchR":0.222,"lineWidthR":0.014,"label":"10 m"},{"cellM":100,"pitchR":0.222,"lineWidthR":0.014,"label":"100 m"},{"cellM":1000,"pitchR":0.222,"lineWidthR":0.014,"label":"1 km"},{"cellM":10000,"pitchR":0.222,"lineWidthR":0.014,"label":"10 km"}]},"marker":{"heightR":0.11,"baseR":0.12,"edgeR":0.008},"ball":{"coreR":0.055,"glowR":0.14,"glowAlpha":0.9,"glowFalloff":1.3,"visibleR":0.9,"mergeR":0.12,"clusterSpacingR":0.11,"digitHeightR":0.075,"digitStrokeR":0.013,"digitDxR":0.075,"digitDyR":-0.035},"arrow":{"radiusR":0.89,"lengthR":0.065,"widthR":0.07,"mergeDeg":6},"blink":{"syncToBeep":true,"riseMs":30,"decayMs":380,"dimLevel":0.35,"periodMs":1000},"scaleLabel":{"enabled":true,"showMs":1200,"fadeMs":400,"yR":0.6,"heightR":0.07,"strokeR":0.011},"transitions":{"zoom":{"durationMs":280,"easing":"easeOutCubic"},"powerOff":{"durationMs":450,"ballsOutMs":120,"sfx":"power_off"}},"boot":{"durationMs":1500,"sfx":"power_on","screenFromMs":0,"screenToMs":240,"flickerAtMs":[70,150],"flickerMs":35,"flickerLevel":0.25,"gridFromMs":240,"gridToMs":700,"markerFromMs":700,"markerToMs":940,"markerBlinks":2,"pingFromMs":940,"pingToMs":1240,"pingWidthR":0.03,"ballsFromMs":1240,"ballsToMs":1500},"sweep":{"enabled":true,"mode":"line","modes":["line","ring","both","none"],"line":{"periodMs":2400,"trailDeg":75,"alpha":0.55,"trailAlpha":0.28,"lineWidthR":0.012,"dotFlash":true},"ring":{"syncToBeep":true,"durationMs":520,"widthR":0.025,"alpha":0.6,"maxR":1}},"font":{"boxW":4,"boxH":6,"advance":5.6,"glyphs":{"0":[[[0,0],[4,0],[4,6],[0,6],[0,0]]],"1":[[[0.8,1.2],[2.2,0],[2.2,6]],[[0.8,6],[3.6,6]]],"2":[[[0,0],[4,0],[4,3],[0,3],[0,6],[4,6]]],"3":[[[0,0],[4,0],[4,6],[0,6]],[[1,3],[4,3]]],"4":[[[3,6],[3,0],[0,4],[4,4]]],"5":[[[4,0],[0,0],[0,3],[4,3],[4,6],[0,6]]],"6":[[[4,0],[0,0],[0,6],[4,6],[4,3],[0,3]]],"7":[[[0,0],[4,0],[1.4,6]]],"8":[[[0,0],[4,0],[4,6],[0,6],[0,0]],[[0,3],[4,3]]],"9":[[[4,3],[0,3],[0,0],[4,0],[4,6],[0,6]]],"k":[[[0,0],[0,6]],[[3.6,2.4],[0,4.6]],[[1.3,3.8],[3.8,6]]],"m":[[[0,6],[0,2.4],[4,2.4],[4,6]],[[2,2.4],[2,6]]]," ":[]}},"demo":{"balls":[{"stars":1,"bearingDeg":40,"distanceM":25},{"stars":2,"bearingDeg":300,"distanceM":180},{"stars":3,"bearingDeg":310,"distanceM":210},{"stars":4,"bearingDeg":120,"distanceM":900},{"stars":5,"bearingDeg":200,"distanceM":3200},{"stars":6,"bearingDeg":197,"distanceM":3300},{"stars":7,"bearingDeg":75,"distanceM":28000}]}}
+</script>
+<script id="sounds-json" type="application/json">
+{"synth":{"sampleRate":48000,"rampMs":2,"levelAt100":0.95,"rangeDb":36,"curveShape":2.5},"beep":{"sfx":"radar_beep","nearM":3,"farM":10000,"minIntervalMs":160,"maxIntervalMs":1400,"curvePow":1,"closeM":30,"closeSfx":"ball_close","foundM":3,"foundSfx":"ball_found","rearmFactor":1.3},"sfx":[{"name":"power_on","tempo":120,"gain":80,"notes":"~tri 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 R:364 2130:80 4260:60 R:100 2130:80 4260:60","es":"Encendido: tono que tiembla mientras se enciende la pantalla y dos \"pi-PI\" con el marcador y la onda","en":"Power on: a warbling tone while the screen lights up and two \"pi-PI\" with the marker and the scan ring"},{"name":"radar_beep","tempo":120,"gain":100,"notes":"~tri 2130:80 4260:60","es":"El \"pi-PI\" del radar: dos tonos a una octava; se repite más rápido cuanto más cerca está la esfera","en":"The radar \"pi-PI\": two tones an octave apart; repeats faster the closer the nearest ball is"},{"name":"zoom_out","tempo":120,"gain":75,"notes":"~tri 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 R:20 4260:40","es":"Botón de arriba: el \"brrr\" del botón y un blip agudo al alejar la escala","en":"Top button: the button \"brrr\" and a high blip when zooming out"},{"name":"button","tempo":120,"gain":80,"notes":"~tri 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12","es":"Pulsar un botón o la pantalla: el \"brrr\" que tiembla entre 2000 y 2200 Hz del clip del anime, antes del pitido","en":"Any button or screen press: the \"brrr\" warbling between 2000 and 2200 Hz in the anime clip, before the beep"},{"name":"zoom_in","tempo":120,"gain":75,"notes":"~tri 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 2000:12 2200:12 R:20 2130:40","es":"Acercar la escala: el mismo \"brrr\" con un blip más grave","en":"Zoom in: the same \"brrr\" with a lower blip"},{"name":"ball_close","tempo":120,"gain":80,"notes":"~tri 2130:40 4260:30 R:30 2130:40 4260:30 R:30 2130:40 4260:30","es":"Una esfera entra a menos de 30 m: tres \"pi-PI\" rápidos","en":"A ball comes within 30 m: three quick \"pi-PI\""},{"name":"ball_found","tempo":120,"gain":85,"notes":"~tri 1568:70 R:15 2093:70 R:15 2637:70 R:15 3136:120 4260:120","es":"Esfera encontrada (a menos de 3 m): cuatro notas que suben y un pip final","en":"Ball found (within 3 m): four rising notes and a final pip"},{"name":"power_off","tempo":120,"gain":75,"notes":"~tri 2200:20 2000:20 1800:20 1600:20 1400:20 1250:20 1100:20 950:25 800:25 650:30 500:40","es":"Apagado: barrido que baja mientras se apaga la pantalla","en":"Power off: a falling sweep while the screen goes dark"}]}
+</script>
 <script>
-  // ?host=<board IP> points the page at a board while developing it from disk.
-  const host = new URLSearchParams(location.search).get('host');
-  const base = host ? `http://${host}` : '';
-  const out = document.getElementById('state');
-  async function poll() {
-    try {
-      const r = await fetch(`${base}/api/state`, { cache: 'no-store' });
-      out.textContent = JSON.stringify(await r.json(), null, 2);
-    } catch (e) {
-      out.textContent = `no answer from the board (${e.message})`;
+// >>> renderer (tools/preview/renderer.js, embedded by tools/preview/build.mjs)
+// Radar renderer shared by the preview (tools/preview/index.html) and the board's web panel
+// (web/index.html). tools/preview/build.mjs copies this file verbatim between the renderer markers
+// of both pages; edit it here, then run the build. Plain browser script, no modules, so both pages
+// keep working from file://. It draws one frame from a view and keeps no state between frames.
+//
+// createRadarRenderer(canvas, RADAR) -> { draw(view), scaleOf(zoom), blinkLevel(msSinceBeep),
+//                                         pointToBall(px, py, view), viewRadiusM(zoom) }
+// view = {
+//   theme, zoom, heading,                    // palette name, level index, degrees (map is heading-up)
+//   balls: [{ stars, bearingDeg, distanceM }],
+//   blink,                                   // dot brightness dimLevel..1 (blinkLevel())
+//   zoomFrom, zoomP,                         // transition from level zoomFrom at progress 0..1 (or null)
+//   bootT, offT,                             // ms since power-on / power-off, or null
+//   labelAge,                                // ms since the last zoom change (scale label), or null
+//   sweep, sweepT, ringAge,                  // scan mode (radar.json sweep.modes), ms clock of the hand,
+//                                            //   ms since the last beep (the ring); mode defaults to none
+//   off,                                     // the screen is dark
+// }
+function createRadarRenderer(canvas, RADAR) {
+  'use strict';
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, CX = W / 2, CY = W / 2, R = W / 2;
+  const LEVELS = RADAR.zoom.levels;
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const ramp = (t, a, b) => (b > a ? clamp01((t - a) / (b - a)) : t >= b ? 1 : 0);
+  const easeOutCubic = (p) => 1 - Math.pow(1 - p, 3);
+  const rad = (d) => (d * Math.PI) / 180;
+  // Digit modes of theme.counts: stars = the star number of the dot's (nearest) ball; none = no digits.
+  const COUNT_MODES = ['stars', 'none'];
+  let P = RADAR.themes[RADAR.theme];
+
+  function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+  function rgba(h, a = 1) { const [r, g, b] = hexRgb(h); return `rgba(${r},${g},${b},${a})`; }
+  function mix(h1, h2, t) {
+    const a = hexRgb(h1), b = hexRgb(h2);
+    return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(',')})`;
+  }
+
+  const scaleOf = (i) => LEVELS[i].pitchR / LEVELS[i].cellM;  // R units per metre
+  const viewRadiusM = (i) => LEVELS[i].cellM / LEVELS[i].pitchR;
+
+  // Dot brightness e ms after a beep: rise to 1, then exponential decay to dimLevel.
+  function blinkLevel(e) {
+    const k = RADAR.blink;
+    if (e < 0) return k.dimLevel;
+    if (e < k.riseMs) return k.dimLevel + (1 - k.dimLevel) * (e / k.riseMs);
+    return k.dimLevel + (1 - k.dimLevel) * Math.exp(-(e - k.riseMs) / k.decayMs);
+  }
+
+  // Brightness of a dot e ms after the sweep hand crossed it: same rise and decay, no floor.
+  function flashLevel(e) {
+    const k = RADAR.blink;
+    if (e < 0) return 0;
+    return e < k.riseMs ? e / k.riseMs : Math.exp(-(e - k.riseMs) / k.decayMs);
+  }
+
+  // Screen positions (R units) at a scale; dots closer than mergeR merge, near arrows are drawn once.
+  // Balls go nearest first, so a merged dot keeps the stars of its nearest ball.
+  function layout(balls, heading, scale) {
+    const B = RADAR.ball, dots = [], arrows = [];
+    const diff = (a, b) => Math.abs(((a - b + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
+    for (const b of [...balls].sort((a, c) => a.distanceM - c.distanceM)) {
+      const rel = rad(b.bearingDeg - heading), r = b.distanceM * scale;
+      if (r > B.visibleR) {
+        if (!arrows.some((a) => diff(a, rel) < rad(RADAR.arrow.mergeDeg))) arrows.push(rel);
+        continue;
+      }
+      const x = Math.sin(rel) * r, y = -Math.cos(rel) * r;
+      const near = dots.find((c) => Math.hypot(c.x - x, c.y - y) < B.mergeR);
+      if (near) { near.x = (near.x * near.n + x) / (near.n + 1); near.y = (near.y * near.n + y) / (near.n + 1); near.n++; }
+      else dots.push({ x, y, n: 1, stars: b.stars });
+    }
+    return { dots, arrows };
+  }
+
+  // Centres (R units, around the group centre) of the n spheres of a cluster: 1 alone, 2 side by
+  // side, 3-6 on a ring (point up when odd, flat top when even), 7 a ring of six around one.
+  function clusterOffsets(n) {
+    const s = RADAR.ball.clusterSpacingR;
+    if (n <= 1) return [[0, 0]];
+    const out = n === 7 ? [[0, 0]] : [], ring = n === 7 ? 6 : n;
+    const rr = n === 7 ? s : s / (2 * Math.sin(Math.PI / n));
+    const start = -Math.PI / 2 + (ring % 2 ? 0 : Math.PI / ring);
+    for (let k = 0; k < ring; k++) {
+      const a = start + (2 * Math.PI * k) / ring;
+      out.push([Math.cos(a) * rr, Math.sin(a) * rr]);
+    }
+    return out;
+  }
+
+  // Canvas pixel -> the ball that would sit there at this zoom and heading.
+  function pointToBall(px, py, view) {
+    const x = (px - CX) / R, y = (py - CY) / R;
+    const rel = Math.atan2(x, -y) * 180 / Math.PI;
+    return {
+      bearingDeg: Math.round((((rel + view.heading) % 360) + 360) % 360 * 10) / 10,
+      distanceM: Math.hypot(x, y) / scaleOf(view.zoom),
+    };
+  }
+
+  function drawScreen() {
+    const sh = RADAR.shading, g = ctx.createRadialGradient(CX, CY, 0, CX, CY, R);
+    g.addColorStop(0, P.screenCenter); g.addColorStop(sh.midStop, P.screen); g.addColorStop(1, P.screenEdge);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, W);
+  }
+
+  function drawRim() {
+    const w = RADAR.shading.rimWidthR, g = ctx.createRadialGradient(CX, CY, R * (1 - w * 2), CX, CY, R);
+    g.addColorStop(0, rgba(P.rim, 0)); g.addColorStop(0.5, rgba(P.rim, 0.55)); g.addColorStop(1, rgba(P.rim, 1));
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(CX, CY, R, 0, 2 * Math.PI); ctx.fill();
+  }
+
+  function drawSheen() {
+    const s = RADAR.shading.sheen;
+    if (!s.enabled) return;
+    ctx.save();
+    ctx.translate(CX + s.cxR * R, CY + s.cyR * R);
+    ctx.rotate(rad(s.angleDeg));
+    ctx.scale(1, s.ryR / s.rxR);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, s.rxR * R);
+    g.addColorStop(0, rgba(P.sheen, s.alpha)); g.addColorStop(1, rgba(P.sheen, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, s.rxR * R, 0, 2 * Math.PI); ctx.fill();
+    ctx.restore();
+  }
+
+  // Square grid of the given pitch (R units), centre in the middle of a cell.
+  function drawGrid(pitchR, lineWidthR, alpha) {
+    if (alpha <= 0.01 || pitchR < 0.015) return;
+    const pitch = pitchR * R, off = RADAR.grid.offsetCells * pitch;
+    ctx.save();
+    ctx.strokeStyle = rgba(P.grid, alpha);
+    ctx.lineWidth = Math.max(1, lineWidthR * R);
+    ctx.beginPath();
+    const n = Math.ceil(R / pitch) + 1;
+    for (let k = -n; k <= n; k++) {
+      const v = k * pitch + off;
+      if (Math.abs(v) > R) continue;
+      ctx.moveTo(CX + v, 0); ctx.lineTo(CX + v, W);
+      ctx.moveTo(0, CY + v); ctx.lineTo(W, CY + v);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawText(str, x, y, heightR, strokeR, color) {
+    const F = RADAR.font, s = (heightR * R) / F.boxH;
+    ctx.save();
+    ctx.strokeStyle = color; ctx.lineWidth = Math.max(1, strokeR * R); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    [...str].forEach((ch, i) => {
+      for (const stroke of F.glyphs[ch] || []) {
+        stroke.forEach(([gx, gy], j) => {
+          const px = x + (i * F.advance + gx) * s, py = y + gy * s;
+          j ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+        });
+      }
+    });
+    ctx.stroke();
+    ctx.restore();
+  }
+  const textWidthR = (str, heightR) => ((str.length - 1) * RADAR.font.advance + RADAR.font.boxW) * (heightR / RADAR.font.boxH);
+
+  function drawDot(x, y, stars, b, alpha) {
+    const B = RADAR.ball, px = CX + x * R, py = CY + y * R;
+    const g = ctx.createRadialGradient(px, py, 0, px, py, B.glowR * R);
+    for (let i = 0; i <= 8; i++) {
+      const t = i / 8;
+      g.addColorStop(t, rgba(P.ballGlow, alpha * B.glowAlpha * b * Math.pow(1 - t, B.glowFalloff)));
+    }
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(px, py, B.glowR * R, 0, 2 * Math.PI); ctx.fill();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = mix(P.ballDim, P.ballCore, b);
+    ctx.beginPath(); ctx.arc(px, py, B.coreR * R, 0, 2 * Math.PI); ctx.fill();
+    ctx.globalAlpha = 1;
+    if (P.counts === 'stars' && stars) {
+      const h = B.digitHeightR;
+      drawText(String(stars), px + B.digitDxR * R, py + (B.digitDyR - h / 2) * R, h, B.digitStrokeR, rgba(P.digits, alpha * (0.55 + 0.45 * b)));
     }
   }
-  poll();
-  setInterval(poll, 2000);
+
+  function drawArrow(rel, b, alpha) {
+    const A = RADAR.arrow;
+    ctx.save();
+    ctx.translate(CX, CY); ctx.rotate(rel);
+    const r0 = (A.radiusR - A.lengthR / 2) * R, r1 = (A.radiusR + A.lengthR / 2) * R, w = (A.widthR / 2) * R;
+    ctx.fillStyle = rgba(P.arrow, alpha * (0.45 + 0.55 * b));
+    ctx.beginPath(); ctx.moveTo(0, -r1); ctx.lineTo(w, -r0); ctx.lineTo(-w, -r0); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  // ---- scan effect (radar.json sweep); screen-fixed like the grid, clockwise from screen-up.
+  const sweepMode = (v) => (RADAR.sweep.enabled && RADAR.sweep.modes.includes(v.sweep) ? v.sweep : 'none');
+  const handDeg = (t) => ((t % RADAR.sweep.line.periodMs) + RADAR.sweep.line.periodMs) % RADAR.sweep.line.periodMs / RADAR.sweep.line.periodMs * 360;
+  // ms since the hand last crossed the screen angle deg (0 = up, clockwise).
+  function sinceHand(deg, t) {
+    const L = RADAR.sweep.line;
+    return ((((handDeg(t) - deg) % 360) + 360) % 360) / 360 * L.periodMs;
+  }
+
+  function drawHand(t) {
+    const L = RADAR.sweep.line, a = rad(handDeg(t) - 90), trail = rad(L.trailDeg), n = 36;
+    ctx.save();
+    // Trail: a wedge of trailDeg behind the hand, trailAlpha at the hand fading linearly to 0.
+    if (ctx.createConicGradient) {
+      const g = ctx.createConicGradient(a - trail, CX, CY), f = trail / (2 * Math.PI);
+      g.addColorStop(0, rgba(P.sweep, 0)); g.addColorStop(f, rgba(P.sweep, L.trailAlpha)); g.addColorStop(Math.min(1, f + 1e-4), rgba(P.sweep, 0));
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.moveTo(CX, CY); ctx.arc(CX, CY, R, a - trail, a); ctx.closePath(); ctx.fill();
+    } else {
+      for (let i = 0; i < n; i++) {  // no conic gradients: n wedges of falling alpha
+        ctx.fillStyle = rgba(P.sweep, L.trailAlpha * (1 - i / n));
+        ctx.beginPath(); ctx.moveTo(CX, CY);
+        ctx.arc(CX, CY, R, a - (trail * (i + 1)) / n, a - (trail * i) / n + 0.002);
+        ctx.closePath(); ctx.fill();
+      }
+    }
+    ctx.strokeStyle = rgba(P.sweep, L.alpha);
+    ctx.lineWidth = Math.max(1, L.lineWidthR * R); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(CX, CY); ctx.lineTo(CX + Math.cos(a) * R, CY + Math.sin(a) * R); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawRing(age) {
+    const G = RADAR.sweep.ring;
+    if (age === null || age === undefined || age < 0 || age >= G.durationMs) return;
+    const p = age / G.durationMs;
+    ctx.strokeStyle = rgba(P.sweep, G.alpha * (1 - p));
+    ctx.lineWidth = Math.max(1, G.widthR * R);
+    ctx.beginPath(); ctx.arc(CX, CY, Math.max(1, p * G.maxR * R), 0, 2 * Math.PI); ctx.stroke();
+  }
+
+  function drawMarker(alpha) {
+    if (alpha <= 0) return;
+    const M = RADAR.marker, h = M.heightR * R, w = (M.baseR / 2) * R;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.moveTo(CX, CY - (2 / 3) * h); ctx.lineTo(CX + w, CY + h / 3); ctx.lineTo(CX - w, CY + h / 3); ctx.closePath();
+    ctx.fillStyle = P.marker; ctx.fill();
+    ctx.lineWidth = Math.max(1, M.edgeR * R); ctx.lineJoin = 'round'; ctx.strokeStyle = P.markerEdge; ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawScaleLabel(zoom, e) {
+    const L = RADAR.scaleLabel;
+    if (!L.enabled || e === null || e === undefined || e < 0 || e > L.showMs + L.fadeMs) return;
+    const a = e < L.showMs ? 1 : 1 - (e - L.showMs) / L.fadeMs;
+    const str = LEVELS[zoom].label, wR = textWidthR(str, L.heightR);
+    drawText(str, CX - (wR / 2) * R, CY + (L.yR - L.heightR / 2) * R, L.heightR, L.strokeR, rgba(P.text, a));
+  }
+
+  function blackout(a) {
+    if (a <= 0) return;
+    ctx.fillStyle = `rgba(0,0,0,${Math.min(1, a)})`;
+    ctx.fillRect(0, 0, W, W);
+  }
+
+  function draw(v) {
+    const BT = RADAR.boot, bootT = v.bootT ?? null, offT = v.offT ?? null;
+    P = RADAR.themes[v.theme] || RADAR.themes[RADAR.theme];
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = P.background; ctx.fillRect(0, 0, W, W);
+    if (v.off || (bootT !== null && bootT < BT.screenFromMs)) return;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(CX, CY, R, 0, 2 * Math.PI); ctx.clip();
+
+    // Zoom transition: log-interpolated scale, old grid out and new grid in, both following the scale.
+    let scale = scaleOf(v.zoom), grids = [[LEVELS[v.zoom], 1, 1]];
+    if (v.zoomFrom !== null && v.zoomFrom !== undefined && v.zoomP < 1) {
+      const p = easeOutCubic(clamp01(v.zoomP)), sF = scaleOf(v.zoomFrom), sT = scaleOf(v.zoom);
+      scale = Math.exp(Math.log(sF) + (Math.log(sT) - Math.log(sF)) * p);
+      grids = [[LEVELS[v.zoomFrom], scale / sF, 1 - p], [LEVELS[v.zoom], scale / sT, p]];
+    }
+
+    drawScreen();
+    const gridR = bootT === null ? 1.5 : ramp(bootT, BT.gridFromMs, BT.gridToMs) * 1.02;
+    if (gridR > 0) {
+      ctx.save();
+      if (gridR < 1.5) { ctx.beginPath(); ctx.arc(CX, CY, gridR * R, 0, 2 * Math.PI); ctx.clip(); }
+      for (const [lvl, k, a] of grids) drawGrid(lvl.pitchR * k, lvl.lineWidthR, a);
+      ctx.restore();
+    }
+    drawSheen();
+
+    // Scan effect: above the grid and the sheen, below the dots and the marker; not while booting
+    // or powering off.
+    const mode = bootT === null && offT === null ? sweepMode(v) : 'none';
+    const hand = mode === 'line' || mode === 'both', t = v.sweepT || 0;
+    if (hand) drawHand(t);
+    if (mode === 'ring' || mode === 'both') drawRing(v.ringAge);
+
+    let ballsA = 1;
+    if (bootT !== null) ballsA = ramp(bootT, BT.ballsFromMs, BT.ballsToMs);
+    if (offT !== null) ballsA = 1 - ramp(offT, 0, RADAR.transitions.powerOff.ballsOutMs);
+    if (ballsA > 0) {
+      const b = v.blink ?? 1, { dots, arrows } = layout(v.balls || [], v.heading || 0, scale);
+      // With dotFlash the hand lights each dot as it crosses it, on top of the beep blink.
+      const flash = hand && RADAR.sweep.line.dotFlash
+        ? (deg) => Math.max(b, flashLevel(sinceHand(deg, t))) : () => b;
+      const deg = (x, y) => (Math.atan2(x, -y) * 180) / Math.PI;
+      for (const rel of arrows) drawArrow(rel, flash((rel * 180) / Math.PI), ballsA);
+      for (const d of dots) {
+        // A group of n balls is a little cluster of n spheres; the rightmost one carries the digit.
+        const offs = clusterOffsets(d.n), fl = flash(deg(d.x, d.y));
+        let lead = 0;
+        offs.forEach(([ox, oy], k) => {
+          const [lx, ly] = offs[lead];
+          if (ox > lx + 1e-4 || (Math.abs(ox - lx) <= 1e-4 && oy < ly)) lead = k;
+        });
+        offs.forEach(([ox, oy], k) => drawDot(d.x + ox, d.y + oy, k === lead ? d.stars : 0, fl, ballsA));
+      }
+    }
+
+    let markerA = 1;
+    if (bootT !== null) {
+      if (bootT < BT.markerFromMs) markerA = 0;
+      else if (bootT < BT.markerToMs) {
+        const slot = (BT.markerToMs - BT.markerFromMs) / (2 * BT.markerBlinks);
+        markerA = Math.floor((bootT - BT.markerFromMs) / slot) % 2 === 0 ? 1 : 0;
+      }
+    }
+    drawMarker(markerA);
+
+    if (bootT !== null && bootT >= BT.pingFromMs && bootT < BT.pingToMs) {
+      const p = ramp(bootT, BT.pingFromMs, BT.pingToMs);
+      ctx.strokeStyle = rgba(P.ping, 0.85 * (1 - p));
+      ctx.lineWidth = BT.pingWidthR * R;
+      ctx.beginPath(); ctx.arc(CX, CY, Math.max(1, p * R), 0, 2 * Math.PI); ctx.stroke();
+    }
+    if (bootT === null && offT === null) drawScaleLabel(v.zoom, v.labelAge);
+    drawRim();
+
+    if (bootT !== null) {
+      let a = ramp(bootT, BT.screenFromMs, BT.screenToMs);
+      for (const f of BT.flickerAtMs) if (bootT >= f && bootT < f + BT.flickerMs) a *= BT.flickerLevel;
+      blackout(1 - a);
+    }
+    if (offT !== null) {
+      const O = RADAR.transitions.powerOff;
+      blackout(ramp(offT, O.ballsOutMs, O.durationMs));
+    }
+    ctx.restore();
+  }
+
+  return { draw, scaleOf, blinkLevel, pointToBall, viewRadiusM, COUNT_MODES };
+}
+// <<< renderer
+</script>
+<script>
+'use strict';
+const RADAR = JSON.parse(document.getElementById('radar-json').textContent);
+const SOUNDS = JSON.parse(document.getElementById('sounds-json').textContent);
+// API names of docs/api.md; tools/check_consistency.mjs keeps them in step with the contract.
+const STATE_FIELDS = ['power', 'zoom', 'zoomLevels', 'heading', 'theme', 'sweep', 'volume', 'muted', 'mode', 'balls', 'nearestM', 'beepIntervalMs'];
+const RADAR_KEYS = ['zoom', 'theme', 'sweep', 'volume', 'muted', 'power', 'resetHeading'];
+const BALL_KEYS = ['stars', 'bearingDeg', 'distanceM'];
+const MAX_BALLS = 7, DISTANCE_MIN_M = 0.1, DISTANCE_MAX_M = 100000;
+const POLL_MS = 250;
+
+const $ = (id) => document.getElementById(id);
+const host = new URLSearchParams(location.search).get('host');
+const BASE = host ? `http://${host}` : '';
+const canvas = $('radar');
+const RENDER = createRadarRenderer(canvas, RADAR);
+const LEVELS = RADAR.zoom.levels;
+
+let dev = null;          // last radar object from the board
+let missing = [];        // STATE_FIELDS the board did not send (older firmware)
+let base = null;         // the rest of /api/state
+const anim = { zoomFrom: null, zoomAt: -1e9, labelAt: -1e9, bootAt: null, offAt: null, beepAt: -1e9, heading: 0 };
+
+// ------------------------------------------------------------------ helpers
+function fmtM(m) {
+  if (m === null || m === undefined) return '—';
+  return m >= 1000 ? `${+(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km` : `${+m.toFixed(m < 10 ? 1 : 0)} m`;
+}
+let toastTimer = 0;
+function toast(msg, bad) {
+  const t = $('toast');
+  t.textContent = msg; t.className = 'show' + (bad ? ' bad' : '');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = ''), bad ? 4000 : 1800);
+}
+async function call(path, body, timeoutMs = 2500) {
+  const ac = new AbortController(), t = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const r = await fetch(BASE + path, body === undefined ? { cache: 'no-store', signal: ac.signal }
+      : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ac.signal });
+    let j = {};
+    try { j = await r.json(); } catch {}
+    if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+    return j;
+  } finally { clearTimeout(t); }
+}
+async function post(path, body, okMsg) {
+  try {
+    const j = await call(path, body);
+    if (j.radar) apply(j.radar, performance.now());
+    if (okMsg) toast(okMsg);
+    return j;
+  } catch (e) {
+    toast(e.name === 'AbortError' ? 'La placa no responde' : e.message, true);
+    return null;
+  }
+}
+function setRadar(patch, okMsg) {
+  const bad = Object.keys(patch).filter((k) => !RADAR_KEYS.includes(k));
+  if (bad.length) throw new Error(`unknown /api/radar field ${bad}`);
+  return post('/api/radar', patch, okMsg);
+}
+
+// ------------------------------------------------------------------ live state
+function apply(r, now) {
+  missing = STATE_FIELDS.filter((k) => !(k in r));
+  if (dev) {
+    if (r.zoom !== dev.zoom) { anim.zoomFrom = dev.zoom; anim.zoomAt = now; anim.labelAt = now; }
+    if (r.power === 'boot' && dev.power !== 'boot') anim.bootAt = now;
+    if (r.power === 'powering_off' && dev.power !== 'powering_off') anim.offAt = now;
+  } else {
+    anim.heading = r.heading || 0;
+    if (r.power === 'boot') anim.bootAt = now;
+  }
+  if (r.power !== 'boot') anim.bootAt = null;
+  if (r.power !== 'powering_off') anim.offAt = null;
+  dev = r;
+  showControls();
+}
+
+let polling = false;
+async function poll() {
+  if (polling) return;
+  polling = true;
+  try {
+    const s = await call('/api/state', undefined, 2000);
+    $('conn').className = 'ok';
+    base = s;
+    if (s.radar) apply(s.radar, performance.now());
+    else $('readout').textContent = 'Este firmware no tiene el radar';
+    const bat = s.power && s.power.batteryPct >= 0 ? ` · batería ${s.power.batteryPct}%${s.power.charging ? ' (cargando)' : ''}` : '';
+    $('host').textContent = (host || location.host || 'placa') + bat;
+  } catch (e) {
+    $('conn').className = 'bad';
+    $('host').textContent = `${host || location.host || 'placa'}: sin respuesta`;
+  } finally { polling = false; }
+}
+
+// ------------------------------------------------------------------ drawing
+const angDiff = (a, b) => ((a - b + 540) % 360) - 180;
+let lastFrame = 0;
+function frame(now) {
+  if (!dev) { RENDER.draw({ off: true }); return; }
+  const dt = Math.min(200, now - (lastFrame || now)); lastFrame = now;
+  // Heading arrives at 4 Hz: ease towards it so the dots turn smoothly.
+  anim.heading = (anim.heading + angDiff(dev.heading || 0, anim.heading) * Math.min(1, dt / 120) + 360) % 360;
+  const iv = dev.beepIntervalMs || RADAR.blink.periodMs;
+  if (now - anim.beepAt >= iv) anim.beepAt = now;
+  let zoomFrom = null, zoomP = 1;
+  if (anim.zoomFrom !== null) {
+    zoomP = (now - anim.zoomAt) / RADAR.transitions.zoom.durationMs;
+    if (zoomP >= 1) anim.zoomFrom = null; else zoomFrom = anim.zoomFrom;
+  }
+  const zoom = Math.max(0, Math.min(LEVELS.length - 1, dev.zoom | 0));
+  RENDER.draw({
+    theme: dev.theme, zoom, heading: anim.heading, balls: dev.balls || [],
+    blink: RENDER.blinkLevel(now - anim.beepAt), zoomFrom, zoomP,
+    bootT: anim.bootAt === null ? null : Math.min(now - anim.bootAt, RADAR.boot.durationMs - 1),
+    offT: anim.offAt === null ? null : now - anim.offAt,
+    labelAge: now - anim.labelAt, off: dev.power === 'off',
+    sweep: dev.sweep || 'none', sweepT: now, ringAge: now - anim.beepAt,
+  });
+}
+function loop(now) { frame(now); requestAnimationFrame(loop); }
+
+// ------------------------------------------------------------------ controls
+function showControls() {
+  const r = dev, on = r.power === 'on' || r.power === 'boot';
+  const lv = r.zoomLevels || LEVELS;
+  $('readout').textContent = !on ? 'Radar apagado'
+    : `Escala ${lv[r.zoom] ? lv[r.zoom].label : '?'} por cuadro · más cerca ${fmtM(r.nearestM)} · ` +
+      `pitido ${r.beepIntervalMs ? `cada ${r.beepIntervalMs} ms` : '—'}${r.muted ? ' (silencio)' : ''} · rumbo ${Math.round(r.heading || 0)}°`;
+  if (missing.length) $('readout').textContent += ` · el firmware no envía ${missing.join(', ')}`;
+  if (document.activeElement !== $('zoom')) $('zoom').value = r.zoom;
+  $('zIn').disabled = !on || r.zoom <= 0;
+  $('zOut').disabled = !on || r.zoom >= LEVELS.length - 1;
+  if (document.activeElement !== $('theme')) $('theme').value = r.theme;
+  if (document.activeElement !== $('sweep')) $('sweep').value = r.sweep || 'none';
+  if (document.activeElement !== $('vol')) { $('vol').value = r.volume; $('volVal').textContent = r.volume; }
+  $('muted').checked = !!r.muted;
+  $('power').textContent = on ? 'Apagar' : 'Encender';
+  $('mode').textContent = r.mode === 'demo' ? '· demo' : r.mode === 'manual' ? '· manuales' : '';
+  if (!dirty) fillSlots(r.balls || []);
+}
+
+LEVELS.forEach((l, i) => $('zoom').add(new Option(`${l.label} por cuadro`, i)));
+for (const [k, t] of Object.entries(RADAR.themes)) $('theme').add(new Option(t.label, k));
+$('zoom').onchange = () => setRadar({ zoom: +$('zoom').value });
+$('zIn').onclick = () => dev && setRadar({ zoom: dev.zoom - 1 });
+$('zOut').onclick = () => dev && setRadar({ zoom: dev.zoom + 1 });
+$('theme').onchange = () => setRadar({ theme: $('theme').value });
+const SWEEP_LABELS = { line: 'aguja', ring: 'onda', both: 'las dos', none: 'ninguno' };
+for (const m of RADAR.sweep.modes) $('sweep').add(new Option(SWEEP_LABELS[m] || m, m));
+$('sweep').onchange = () => setRadar({ sweep: $('sweep').value });
+$('vol').oninput = () => ($('volVal').textContent = $('vol').value);
+$('vol').onchange = () => setRadar({ volume: +$('vol').value });
+$('muted').onchange = () => setRadar({ muted: $('muted').checked });
+$('power').onclick = () => dev && setRadar({ power: dev.power === 'off' || dev.power === 'powering_off' ? 'on' : 'off' });
+$('north').onclick = () => setRadar({ resetHeading: true }, 'Norte fijado');
+
+const SFX_LABELS = { power_on: 'encender', radar_beep: 'pitido', zoom_out: 'alejar', button: 'botón', zoom_in: 'acercar', ball_close: 'cerca', ball_found: 'encontrada', power_off: 'apagar' };
+for (const s of SOUNDS.sfx) {
+  const b = document.createElement('button');
+  b.textContent = SFX_LABELS[s.name] || s.name.replace(/_/g, ' ');
+  b.title = s.es || s.en || s.name;
+  b.onclick = () => post('/api/sfx', { name: s.name });
+  $('sfx').append(b);
+}
+
+// ------------------------------------------------------------------ ball editor
+let dirty = false, active = 0;
+const slotRows = [];
+for (let i = 0; i < MAX_BALLS; i++) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td><input type="radio" name="active" aria-label="Fila ${i + 1}"></td><td><input type="checkbox" aria-label="Activa"></td>` +
+    `<td><select aria-label="Estrellas">${[1, 2, 3, 4, 5, 6, 7].map((n) => `<option>${n}</option>`).join('')}</select></td>` +
+    `<td><input type="number" min="0" max="359.9" step="0.1" aria-label="Rumbo"></td>` +
+    `<td><input type="number" min="${DISTANCE_MIN_M}" max="${DISTANCE_MAX_M}" step="any" aria-label="Distancia"></td>`;
+  const [pick, on, stars, bearing, dist] = tr.querySelectorAll('input, select');
+  pick.checked = i === 0;
+  pick.onchange = () => setActive(i);
+  tr.onclick = (e) => { if (e.target.tagName === 'TD') setActive(i); };
+  for (const el of [on, stars, bearing, dist]) el.addEventListener('input', () => (dirty = true));
+  slotRows.push({ tr, pick, on, stars, bearing, dist });
+  $('slots').append(tr);
+}
+function setActive(i) {
+  active = i;
+  slotRows.forEach((s, k) => { s.tr.className = k === i ? 'active' : ''; s.pick.checked = k === i; });
+}
+setActive(0);
+
+function fillSlots(balls) {
+  const used = new Set(balls.map((b) => b.stars));
+  const free = [1, 2, 3, 4, 5, 6, 7].filter((n) => !used.has(n));
+  slotRows.forEach((s, i) => {
+    const b = balls[i];
+    s.on.checked = !!b;
+    s.stars.value = b ? b.stars : free.shift() || i + 1;
+    s.bearing.value = b ? +b.bearingDeg.toFixed(1) : '';
+    s.dist.value = b ? +b.distanceM.toPrecision(4) : '';
+  });
+}
+function readSlots() {
+  const balls = [];
+  for (const [i, s] of slotRows.entries()) {
+    if (!s.on.checked) continue;
+    const b = { stars: +s.stars.value, bearingDeg: +s.bearing.value, distanceM: +s.dist.value };
+    if (s.bearing.value === '' || !(b.bearingDeg >= 0 && b.bearingDeg < 360)) throw new Error(`Fila ${i + 1}: rumbo de 0 a 359.9`);
+    if (s.dist.value === '' || !(b.distanceM >= DISTANCE_MIN_M && b.distanceM <= DISTANCE_MAX_M)) throw new Error(`Fila ${i + 1}: distancia de ${DISTANCE_MIN_M} a ${DISTANCE_MAX_M} m`);
+    balls.push(Object.fromEntries(BALL_KEYS.map((k) => [k, b[k]])));
+  }
+  return balls;
+}
+async function sendBalls(body, msg) {
+  const j = await post('/api/balls', body, msg);
+  if (j) { dirty = false; if (dev) fillSlots(dev.balls || []); }
+}
+$('send').onclick = () => {
+  try { sendBalls({ balls: readSlots() }, 'Esferas enviadas'); } catch (e) { toast(e.message, true); }
+};
+$('demo').onclick = () => sendBalls({ demo: true }, 'Esferas de demostración');
+$('clear').onclick = () => sendBalls({ balls: [] }, 'Sin esferas');
+
+// Click on the radar: put the chosen row's ball there, at the current scale and heading.
+canvas.addEventListener('click', (e) => {
+  if (!dev) return;
+  const k = canvas.width / canvas.clientWidth;
+  const p = RENDER.pointToBall(e.offsetX * k, e.offsetY * k, { zoom: dev.zoom, heading: dev.heading || 0 });
+  if (Math.hypot(e.offsetX * k - canvas.width / 2, e.offsetY * k - canvas.height / 2) > canvas.width / 2) return;
+  const s = slotRows[active];
+  s.on.checked = true;
+  s.bearing.value = p.bearingDeg >= 360 ? 0 : p.bearingDeg;
+  s.dist.value = +Math.min(DISTANCE_MAX_M, Math.max(DISTANCE_MIN_M, p.distanceM)).toPrecision(3);
+  dirty = true;
+  try { sendBalls({ balls: readSlots() }, `Esfera de ${s.stars.value} estrellas colocada`); } catch (err) { toast(err.message, true); }
+  setActive((active + 1) % MAX_BALLS);
+});
+
+// ------------------------------------------------------------------ start
+poll();
+setInterval(poll, POLL_MS);
+setInterval(() => frame(performance.now()), 100);  // keeps drawing in background tabs and headless shots
+requestAnimationFrame(loop);
 </script>
 </body>
 </html>

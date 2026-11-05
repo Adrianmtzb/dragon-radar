@@ -1,6 +1,12 @@
 // Dragon Radar: a Dragon Ball style radar on the Waveshare ESP32-S3-Touch-AMOLED-1.75C.
-// Bring-up skeleton: splash, keys, touch, IMU, PMIC, speaker, WiFi with the setup portal, the
-// common HTTP API plus /api/state, and the serial console. The radar itself comes later.
+// The radar (radar.h) owns the screen and the sounds; this sketch wires the board to it: keys,
+// touch, IMU, PMIC, WiFi with the setup portal, the HTTP API (radar_api.h) and the serial console.
+//
+// Controls: BOOT click = zoom out, Key2 click = zoom in (both wrap around), Key2 hold (600 ms) = power off/on
+// (holding Key2 6 s switches the PMIC off: that is the board's own power key), BOOT hold = info
+// card. On the screen: tap = zoom out, double tap = info card, swipe left/right = next/previous
+// theme, long press = reset the heading (north = now). Every press, key or finger, plays the press
+// sound as it goes down (radarPressDown), only while the radar is on.
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <Wire.h>
@@ -10,12 +16,17 @@
 #include "hw.h"
 #include "lcd.h"
 #include "led.h"
+#include "info.h"
+#include "mic.h"
 #include "motion.h"
 #include "net.h"
+#include "radar.h"
+#include "radar_api.h"
 #include "sound.h"
 #include "touch.h"
 
 static Arduino_Canvas *gfx = nullptr;
+static bool recActive = false;  // a 'rec' is running: the radar's beeps hold off until it is dumped
 static uint32_t bootCount = 0;
 
 // Last input seen, for /api/state and the logs.
@@ -38,34 +49,8 @@ static void noteInput(const char *source, const char *event, int16_t x = -1, int
 
 static uint16_t rgb565(uint32_t rgb) { return ((rgb >> 8) & 0xF800) | ((rgb >> 5) & 0x07E0) | ((rgb >> 3) & 0x001F); }
 
-static void drawCentered(const char *text, int16_t cy, uint8_t size, uint16_t color) {
-  int16_t x1, y1;
-  uint16_t w, h;
-  gfx->setTextSize(size);
-  gfx->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-  gfx->setTextColor(color);
-  gfx->setCursor((lcdWidth() - (int16_t)w) / 2 - x1, cy - (int16_t)h / 2 - y1);
-  gfx->print(text);
-}
-
-// Boot screen: black, a placeholder green disc for the radar, name, version and the author's site.
-// Every position derives from the canvas size.
-static void drawSplash() {
-  if (!gfx) return;
-  const int16_t W = lcdWidth(), H = lcdHeight(), cx = W / 2, cy = H / 2;
-  const int16_t r = min(W, H) * 39 / 100;
-  gfx->fillScreen(0x0000);
-  gfx->fillCircle(cx, cy, r, rgb565(0x2BD66B));
-  gfx->drawCircle(cx, cy, r * 2 / 3, rgb565(0x1E9E4E));
-  gfx->drawCircle(cx, cy, r / 3, rgb565(0x1E9E4E));
-  drawCentered("Dragon Radar", cy - H / 30, 4, 0x0000);
-  drawCentered("v" FW_VERSION, cy + H / 12, 2, 0x0000);
-  drawCentered(AUTHOR_SHORT, cy + r + (H / 2 - r) / 2, 2, rgb565(0x9AA59D));
-  gfx->flush();
-}
-
-// Full-screen flush rate: `frames` frames of a changing fill, flush timed on its own and with the
-// fill. Redraws the splash afterwards.
+// Raw full-screen flush rate: `frames` frames of a changing fill, flush timed on its own and with
+// the fill. The radar redraws its whole frame afterwards.
 static void measureFps(int frames) {
   if (!gfx) {
     Serial.println("error: no display");
@@ -86,36 +71,156 @@ static void measureFps(int frames) {
   Serial.printf("fps: %d frames %dx%d, flush %.1f ms (%.1f fps), draw+flush %.1f ms (%.1f fps)\n", frames, lcdWidth(),
                 lcdHeight(), flushUs / 1000.0f / frames, frames * 1e6f / flushUs, totalUs / 1000.0f / frames,
                 frames * 1e6f / totalUs);
-  drawSplash();
-}
-
-// Night dimming (devsettings.h): the brightness follows the clock, checked once a second.
-static void applyBacklight() {
-  static uint32_t last = 0;
-  if (millis() - last < 1000) return;
-  last = millis();
-  uint8_t bl = devBacklightLevel(netIsNight());
-  if (lcdBacklight() != bl) lcdSetBacklight(bl);
+  radarInvalidate();
 }
 
 // ---------- input ----------
 
+// The info card: BOOT long press, a double tap or the CLI 'info' open it for INFO_MS; any press or
+// gesture closes it (and does nothing else).
+static const uint32_t INFO_MS = 10000, INFO_SHORT_MS = 2200;
+
+// BOOT click: zoom out; BOOT hold: info card. Key2 click: zoom in; Key2 hold: power off/on.
+static const char *onKey(HwKey k, HwButtonEvent e) {
+  if (e == HW_BTN_LONG && k == HW_KEY_2) {
+    infoHide();
+    radarPowerToggle();
+    return radarIsOn() ? "power on" : "power off";
+  }
+  if (infoShowing()) {
+    if (e != HW_BTN_CLICK && e != HW_BTN_LONG) return nullptr;
+    infoHide();
+    return "close info";
+  }
+  if (e == HW_BTN_LONG && k == HW_KEY_BOOT && radarIsOn()) {
+    infoShow(true, INFO_MS);
+    return "info";
+  }
+  if (e != HW_BTN_CLICK || !radarIsOn()) return nullptr;
+  if (k == HW_KEY_BOOT) radarZoomOut();
+  else radarZoomIn();
+  return k == HW_KEY_BOOT ? "zoom out" : "zoom in";
+}
+
+// Every press plays the press sound on its down edge (radarPressDown), before anything else.
+// `pollGapMs`: time since the previous poll, so the edge happened at most that long before.
+static uint32_t lastKeyPollMs = 0;
+
 static void pollKeys() {
+  const uint32_t now = millis(), gap = lastKeyPollMs ? now - lastKeyPollMs : 0;
+  lastKeyPollMs = now;
   for (uint8_t k = 0; k < HW_KEY_COUNT; k++) {
     if (!hwKeyPresent((HwKey)k)) continue;
     HwButtonEvent e = hwKeyPoll((HwKey)k);
-    if (e == HW_BTN_NONE || e == HW_BTN_DOWN) continue;
+    if (e == HW_BTN_NONE) continue;
+    if (e == HW_BTN_DOWN) {
+      Serial.printf("[key] %s down at %u ms (edge within the last %u ms poll gap) -> press sound\n", hwKeyName((HwKey)k),
+                    (unsigned)now, (unsigned)gap);
+      radarPressDown(hwKeyName((HwKey)k));
+      continue;
+    }
     noteInput(hwKeyName((HwKey)k), hwButtonEventName(e));
-    Serial.printf("[key] %s %s\n", hwKeyName((HwKey)k), hwButtonEventName(e));
+    const char *did = onKey((HwKey)k, e);
+    Serial.printf("[key] %s %s%s%s\n", hwKeyName((HwKey)k), hwButtonEventName(e), did ? " -> " : "", did ? did : "");
+  }
+}
+
+// Touch: a tap waits BUTTON_DOUBLE_CLICK_MS for a second one; a single tap zooms out, a double tap
+// opens the info card. Swipe left/right: next/previous theme. Long press: north = where it points.
+static uint32_t tapPendingMs = 0;  // a first tap waiting for its pair, 0 = none
+static bool touchWasDown = false;  // for the finger's down edge
+
+// Simulated presses (CLI press/hold/tp): the down edge now and the event when a finger or key would
+// give it (a click on release ~80 ms later, a hold after BUTTON_LONG_PRESS_MS), so the press sound
+// and the action keep their real timing.
+struct SimStep {
+  uint32_t at;
+  uint8_t what;  // 0 = key edge, 1 = key event, 2 = touch edge, 3 = touch gesture
+  uint8_t key, ev;
+  int16_t x, y;
+};
+static SimStep sims[8];
+static int simCount = 0;
+
+static void simAdd(uint32_t delayMs, uint8_t what, uint8_t key, uint8_t ev, int16_t x = 0, int16_t y = 0) {
+  if (simCount < (int)(sizeof(sims) / sizeof(sims[0]))) sims[simCount++] = {millis() + delayMs, what, key, ev, x, y};
+}
+
+static void simLoop() {
+  const uint32_t now = millis();
+  for (int i = 0; i < simCount;) {
+    SimStep st = sims[i];
+    if ((int32_t)(now - st.at) < 0) {
+      i++;
+      continue;
+    }
+    memmove(sims + i, sims + i + 1, sizeof(SimStep) * (simCount - i - 1));
+    simCount--;
+    if (st.what == 0 || st.what == 2) {
+      const char *src = st.what == 0 ? hwKeyName((HwKey)st.key) : "touch";
+      Serial.printf("[%s] %s down at %u ms (simulated) -> press sound\n", st.what == 0 ? "key" : "touch", src,
+                    (unsigned)now);
+      radarPressDown(src);
+    } else if (st.what == 1) {
+      hwKeyInject((HwKey)st.key, (HwButtonEvent)st.ev);
+    } else {
+      touchInject((TouchKind)st.ev, st.x, st.y);
+    }
+  }
+}
+
+static const char *onTouch(const TouchEvent &e) {
+  if (infoShowing()) {
+    tapPendingMs = 0;
+    infoHide();
+    return "close info";
+  }
+  if (!radarIsOn()) return nullptr;
+  switch (e.kind) {
+    case TOUCH_TAP:
+      if (tapPendingMs) {
+        tapPendingMs = 0;
+        infoShow(true, INFO_MS);
+        return "double tap: info";
+      }
+      tapPendingMs = millis() | 1;
+      return "tap (waiting for a second one)";
+    case TOUCH_SWIPE_LEFT: radarStepTheme(1); return "next theme";
+    case TOUCH_SWIPE_RIGHT: radarStepTheme(-1); return "previous theme";
+    case TOUCH_LONG_PRESS: radarResetHeading(); return "heading reset";
+    default: return nullptr;
   }
 }
 
 static void pollTouch() {
+  if (tapPendingMs && (int32_t)(millis() - tapPendingMs) > (int32_t)BUTTON_DOUBLE_CLICK_MS) {
+    tapPendingMs = 0;  // no second tap: it was a single one
+    if (radarIsOn() && !infoShowing()) {
+      radarZoomOut();
+      Serial.println("[touch] single tap -> zoom out");
+    }
+  }
   TouchEvent e = touchPoll();
+  const bool down = touchDown();
+  if (down && !touchWasDown) {  // seen on two polls in a row (touch.cpp): 15-30 ms after contact
+    Serial.printf("[touch] down at %u ms -> press sound\n", (unsigned)millis());
+    radarPressDown("touch");
+  }
+  touchWasDown = down;
   if (e.kind == TOUCH_NONE) return;
   noteInput("touch", touchKindName(e.kind), e.x, e.y);
-  if (e.rawX < 0) Serial.printf("[touch] %s x=%d y=%d (simulated)\n", touchKindName(e.kind), e.x, e.y);
-  else Serial.printf("[touch] %s x=%d y=%d raw=(%d, %d)\n", touchKindName(e.kind), e.x, e.y, e.rawX, e.rawY);
+  const char *did = onTouch(e);
+  if (e.rawX < 0) Serial.printf("[touch] %s x=%d y=%d (simulated)", touchKindName(e.kind), e.x, e.y);
+  else Serial.printf("[touch] %s x=%d y=%d raw=(%d, %d)", touchKindName(e.kind), e.x, e.y, e.rawX, e.rawY);
+  Serial.printf("%s%s\n", did ? " -> " : "", did ? did : "");
+}
+
+// The short card (name, version, board) once the boot animation is over, as on the sibling apps.
+static void bootCard() {
+  static bool done = false;
+  if (done || !radarReady()) return;
+  done = true;
+  infoShow(false, INFO_SHORT_MS);
 }
 
 // ---------- status (CLI and API) ----------
@@ -208,8 +313,11 @@ static void cliStatus(Print &out) {
 
 static void cliHelp(Print &out) {
   out.println(
-      "radar:    tp <x> <y> [tap|long|left|right|up|down] | press [boot|key2] | hold [boot|key2]\n"
-      "          imu | yaw0 | beep <hz> <ms> [square|sine] [<vol 0-100>] | fps [<frames>] | splash | i2c");
+      "board:    tp <x> <y> [tap|double|long|left|right|up|down] | press [boot|key2] | hold [boot|key2]\n"
+      "          info [short|close]\n"
+      "          imu | beep <hz> <ms> [square|sine|tri] [<vol 0-100>] | fps [<frames>] | state | i2c\n"
+      "          rec <ms> [<sfx> | tone <hz> <ms> [<wave>] [<vol>]] | micgain [0-14]");
+  radarCliHelp(out);
 }
 
 static bool keyArg(const String &arg, HwKey &k) {
@@ -224,13 +332,27 @@ static bool cliCommand(const String &cmd, const String &rest) {
     int x = -1, y = -1;
     char kind[8] = "tap";
     int n = sscanf(rest.c_str(), "%d %d %7s", &x, &y, kind);
-    TouchKind k;
-    if (n < 2 || x < 0 || y < 0 || x >= lcdWidth() || y >= lcdHeight() || !touchKindFromName(kind, k)) {
-      Serial.printf("usage: tp <x 0-%d> <y 0-%d> [tap|long|left|right|up|down]\n", lcdWidth() - 1, lcdHeight() - 1);
+    TouchKind k = TOUCH_TAP;
+    const bool dbl = !strcmp(kind, "double");
+    if (n < 2 || x < 0 || y < 0 || x >= lcdWidth() || y >= lcdHeight() || (!dbl && !touchKindFromName(kind, k))) {
+      Serial.printf("usage: tp <x 0-%d> <y 0-%d> [tap|double|long|left|right|up|down]\n", lcdWidth() - 1, lcdHeight() - 1);
       return true;
     }
-    touchInject(k, x, y);
+    // Like a finger: down now, the gesture on lift (tap 80 ms, swipe 150 ms) or while still down
+    // (long press); a double tap is two taps 150 ms apart.
+    const uint32_t lift = k == TOUCH_TAP ? 80 : k == TOUCH_LONG_PRESS ? BUTTON_LONG_PRESS_MS : 150;
+    simAdd(0, 2, 0, 0);
+    simAdd(lift, 3, 0, dbl ? TOUCH_TAP : k, x, y);
+    if (dbl) {
+      simAdd(150, 2, 0, 0);
+      simAdd(230, 3, 0, TOUCH_TAP, x, y);
+    }
     Serial.println("ok");
+  } else if (cmd == "info") {
+    if (rest == "close" || rest == "off") infoHide();
+    else if (!radarIsOn()) Serial.println("error: the radar is off");
+    else infoShow(rest != "short", rest == "short" ? INFO_SHORT_MS : INFO_MS);
+    Serial.printf("info=%s\n", infoShowing() ? "shown" : "hidden");
   } else if (cmd == "press" || cmd == "hold") {
     HwKey k;
     String arg = rest;
@@ -239,7 +361,9 @@ static bool cliCommand(const String &cmd, const String &rest) {
       Serial.println("usage: press|hold [boot|key2]");
       return true;
     }
-    hwKeyInject(k, cmd == "press" ? HW_BTN_CLICK : HW_BTN_LONG);
+    // Down now; a click on release 80 ms later, or the long press after BUTTON_LONG_PRESS_MS.
+    simAdd(0, 0, k, 0);
+    simAdd(cmd == "press" ? 80 : BUTTON_LONG_PRESS_MS, 1, k, cmd == "press" ? HW_BTN_CLICK : HW_BTN_LONG);
     Serial.println("ok");
   } else if (cmd == "imu") {
     float ax, ay, az, gx, gy, gz;
@@ -249,9 +373,6 @@ static bool cliCommand(const String &cmd, const String &rest) {
     bool bias = motionGyroBias(bx, by, bz);
     Serial.printf("imu=%d accel=(%.3f, %.3f, %.3f) g gyro=(%.2f, %.2f, %.2f) dps yaw=%.1f deg bias=(%.2f, %.2f, %.2f)%s\n",
                   has, ax, ay, az, gx, gy, gz, motionYaw(), bx, by, bz, bias ? "" : " (not learned yet)");
-  } else if (cmd == "yaw0") {
-    motionResetYaw();
-    Serial.println("ok");
   } else if (cmd == "beep") {
     int hz = 0, ms = 0, vol = -1;
     char wave[8] = "";
@@ -259,7 +380,7 @@ static bool cliCommand(const String &cmd, const String &rest) {
     SoundWave w = WAVE_DEFAULT;
     if (n < 2 || hz < 20 || hz > 20000 || ms < 1 || ms > 10000 || (n >= 3 && !soundWaveFromName(wave, w)) ||
         (n >= 4 && (vol < 0 || vol > 100))) {
-      Serial.println("usage: beep <20-20000 Hz> <1-10000 ms> [square|sine] [<volume 0-100>]");
+      Serial.println("usage: beep <20-20000 Hz> <1-10000 ms> [square|sine|tri] [<volume 0-100>]");
       return true;
     }
     soundToneEx(hz, ms, w, vol);
@@ -267,14 +388,46 @@ static bool cliCommand(const String &cmd, const String &rest) {
                   soundOutputName());
   } else if (cmd == "fps") {
     measureFps(rest.length() ? rest.toInt() : 60);
-  } else if (cmd == "splash" || cmd == "boot") {
-    drawSplash();
-    Serial.println("ok");
   } else if (cmd == "state") {  // the body of GET /api/state
     JsonDocument doc;
     stateJson(doc.to<JsonObject>());
+    radarStateJson(doc["radar"].to<JsonObject>());
     serializeJson(doc, Serial);
     Serial.println();
+  } else if (cmd == "rec") {
+    // rec <ms> [<sfx> | tone <hz> <ms> [square|sine|tri] [<vol>]]: the board's microphones while it
+    // plays; the radar's own beeps hold off meanwhile. The dump (REC ... ENDREC) follows when done.
+    int ms = 0, hz = 0, tms = 0, vol = -1;
+    char what[24] = "", wave[8] = "square";
+    int n = sscanf(rest.c_str(), "%d %23s %d %d %7s %d", &ms, what, &hz, &tms, wave, &vol);
+    if (n < 1 || ms < 50 || ms > 4000) {
+      Serial.println("usage: rec <50-4000 ms> [<sfx name> | tone <hz> <ms> [square|sine|tri] [<vol>]]");
+      return true;
+    }
+    // Quiet first: the radar's beep loop holds off, and what the codec still has queued plays out.
+    radarPauseBeeps(true);
+    soundStop();
+    delay(150);
+    if (!micPresent() || !micRecordStart(ms)) {
+      radarPauseBeeps(false);
+      Serial.println("error: no microphone, or a recording is running");
+      return true;
+    }
+    recActive = true;
+    const uint32_t t0 = millis();
+    while (!micRecordStarted() && millis() - t0 < 300) delay(1);  // the recorder drops its stale queue
+    delay(30);  // a little silence before the sound
+    if (!strcmp(what, "tone")) {
+      SoundWave w = WAVE_DEFAULT;
+      soundWaveFromName(wave, w);
+      soundToneEx(hz, tms, w, vol);
+    } else if (what[0] && !radarPlaySfx(what)) {
+      Serial.printf("note: sfx '%s' not played (unknown, muted or radar off)\n", what);
+    }
+    Serial.printf("rec %d ms at %u Hz, mic gain step %d\n", ms, (unsigned)soundSampleRate(), micGain());
+  } else if (cmd == "micgain") {
+    if (rest.length() && !micSetGain(rest.toInt())) Serial.println("error: micgain 0-14 (0-37.5 dB)");
+    else Serial.printf("micgain=%d\n", micGain());
   } else if (cmd == "i2c") {
     Serial.print("i2c:");
     for (uint8_t a = 1; a < 127; a++) {
@@ -290,13 +443,8 @@ static bool cliCommand(const String &cmd, const String &rest) {
 
 // ---------- HTTP ----------
 
-static void routes(WebServer &server) {
-  server.on("/api/state", HTTP_GET, []() {
-    JsonDocument doc;
-    stateJson(doc.to<JsonObject>());
-    netSendJson(doc);
-  });
-}
+// GET /api/state (these fields plus "radar"), POST /api/radar, /api/balls and /api/sfx.
+static void routes(WebServer &server) { radarApiRegister(server, stateJson); }
 
 static void info(JsonObject o) {
   o["imu"] = motionHasImu();
@@ -332,18 +480,19 @@ void setup() {
   devLoad();  // WiFi, clock, screen and sound settings
   loadAppState();
   gfx = lcdBegin(devRotation());
-  drawSplash();
-  lcdSetBacklight(devBacklightLevel(false));
   motionBegin(devRotation());
   touchBegin(devRotation());
   soundBegin();
+  micBegin();
+  radarBegin();  // plays the power-on timeline; the panel brightness follows it
   ledBegin({nullptr, ledNetState});
   NetHooks hooks = {};
   hooks.routes = routes;
   hooks.info = info;
   hooks.event = netEvent;
   netBegin(hooks);
-  cliBegin({cliCommand, cliHelp, cliStatus});
+  // radarCli goes first: it gives 'sfx <name>' the radar's gain and mute.
+  cliBegin({cliCommand, cliHelp, cliStatus, radarCli});
   Serial.printf("%s %s on %s, boot %u\n", FW_NAME, FW_VERSION, BOARD_NAME, (unsigned)bootCount);
 }
 
@@ -351,13 +500,21 @@ void loop() {
   netLoop();
   motionLoop();
   cliLoop();
+  simLoop();
   pollKeys();
   pollTouch();
   hwLoop();
   if (hwBatteryLowAlarmDue()) Serial.println("[hw] battery low");
   soundLoop();
+  if (recActive && !micRecording()) {
+    micLoop(Serial);  // the dump of a finished 'rec'
+    recActive = false;
+    radarPauseBeeps(false);
+  }
+  bootCard();
+  infoLoop();
+  radarLoop(millis());
   ledLoop();
-  applyBacklight();
   if (netRestartRequested()) {
     delay(300);  // let the HTTP response go out
     ESP.restart();

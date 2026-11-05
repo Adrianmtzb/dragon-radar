@@ -26,6 +26,7 @@ previa `tools/preview/index.html`, que es la referencia visual que tiene que igu
 | 5 | Bandai Tamashii Nations, PROPLICA Dragon Radar: <https://tamashiiweb.com/item/13034/> | Réplica oficial a escala (unos 100 mm): esferas con LED, sonido de arranque, el botón cambia de modo. |
 | 6 | Fotogramas del wiki (1): `Radar.png` (DB clásico), `DBLocationsOnNamek.png` (Z, Namek), `DragonRadar(PtP).png` (*The Path to Power*), `GiruRadar.png` (GT) | Colores y medidas muestreados píxel a píxel (ver abajo). Las imágenes se usaron solo para medir y **no están en el repo**. |
 | 7 | Réplicas de aficionados: tokio666/db-radar <https://github.com/tokio666/db-radar> (ESP32-S3, 5 niveles de 50 m a 1 km, puntos amarillos, triángulo rojo en el centro, flechas en el borde), Extra Long Division <https://www.hackster.io/extralongdivision/dragon-ball-radar-b8a9cc> (pita al pulsar y propone pitar más rápido cuanto más cerca), ThorAsgardDev/dragon-radar <https://github.com/ThorAsgardDev/dragon-radar> | Cómo han resuelto otros lo que el anime no define: escala por nivel, flechas, ritmo del pitido. |
+| 8 | Un fragmento de audio del radar en el anime, medido con un análisis espectral (el fragmento **no está en el repo**; solo se tomaron medidas) | Tono, armónicos y tiempos del pitido: cada pitido es un "pi-PI" de unos 80 ms a 2130 Hz seguido de unos 60 ms a 4260 Hz (una octava más), con un timbre cercano a una onda triangular (tercer armónico ≈ 0,13 del fundamental). El fragmento empieza con un "brrr", un tono que tiembla en 2100 ± 100 Hz (alterna 2000 y 2200 Hz), que se oye al pulsar el botón antes del pitido. |
 
 ## El original
 
@@ -60,13 +61,15 @@ nivel; la única cifra es el radio de 100 km del radar del Red Ribbon, que "no h
 cuadrícula y las esferas. La PROPLICA tiene un sonido de arranque (5). No hay una animación de
 encendido documentada.
 
-**Sonido.** Pitidos electrónicos cortos y agudos ("pi... pi...") mientras busca. Ninguna fuente
-fija la frecuencia ni que el ritmo dependa de la distancia: eso es una convención de detector de
-metales que también proponen las réplicas (7).
+**Sonido.** Pitidos electrónicos cortos y agudos mientras busca. Medido en un fragmento del anime
+(8), cada pitido es un "pi-PI": unos 80 ms a 2130 Hz y unos 60 ms una octava más arriba, a 4260 Hz,
+con timbre casi triangular (tercer armónico ≈ 0,13). Ninguna fuente dice que el ritmo dependa de la
+distancia: eso es una convención de detector de metales que también proponen las réplicas (7).
 
 **Escaneo.** No hay línea de barrido giratoria como en un radar de avión: los puntos aparecen y
-parpadean. Tampoco hay texto en pantalla salvo los números de las esferas agrupadas (*Z*) y las
-coordenadas de *GT*.
+parpadean. Tampoco hay texto en pantalla salvo los números junto a las esferas (*Z*) y las
+coordenadas de *GT*. El barrido de este proyecto es una petición del usuario tras probar el
+dispositivo, no algo del original (ver la tabla de decisiones).
 
 ## Decisiones
 
@@ -79,17 +82,18 @@ coordenadas de *GT*.
 | Cuadrícula | Cuadrada, fija, ~9 celdas, centro en mitad de celda, líneas oscuras | **Reproducimos**: paso 0,222 R (51,7 px), línea 0,014 R (3,3 px), desplazada media celda, no gira con el rumbo | `grid`, `zoom.levels[].pitchR`, `lineWidthR` |
 | Marcador | Triángulo rojo con la punta arriba | **Reproducimos**: triángulo isósceles 0,12 R × 0,11 R con el baricentro en el centro y borde oscuro. Mapa con el rumbo arriba: el giroscopio gira las esferas, no el triángulo | `marker`, `themes.z.marker` |
 | Esferas | Disco claro con halo, parpadeo | **Reproducimos**: disco de 0,055 R y halo de 0,14 R con caída `(1 − d/r)^1.3`; el color pasa de `ballDim` a `ballCore` con el brillo | `ball` |
-| Agrupadas | Un punto con número (*Z*) | **Reproducimos**: los puntos a menos de 0,08 R se funden en su centroide; en el tema *Z* todos los puntos llevan su número (como en Namek), en los otros solo los grupos | `ball.mergeR`, `themes.*.counts` |
+| Agrupadas | Un punto con número (*Z*) | **Reproducimos** la fusión: los puntos a menos de 0,08 R se funden en su centroide; el punto fundido lleva el número de su esfera más cercana | `ball.mergeR` |
 | Fuera de la vista | "Flechas" (wiki), triángulos rojos en el borde (*PtP*) | **Reproducimos**: triángulo en 0,89 R apuntando hacia fuera en el rumbo de la esfera; flechas a menos de 6° se dibujan una vez | `arrow` |
 | Parpadeo | Parpadean | **Reproducimos** sincronizado con el pitido: sube a brillo 1 en 30 ms y decae (τ = 380 ms) hasta 0,35. Sin pitido, cada 1000 ms | `blink` |
 | Zoom | El botón de arriba aleja; escala desconocida | **Reproducimos** el gesto y **fijamos** 4 niveles: 10 m, 100 m, 1 km y 10 km por celda (radio visible 45 m, 450 m, 4,5 km y 45 km). Un botón aleja y al pasar del último vuelve al primero; el otro acerca (cuál es cuál lo decide el firmware según dónde quede cada uno en la caja). Arranca en 100 m | `zoom.levels`, `zoom.default`, `zoom.wrap` |
 | Cambio de nivel | No se ve en detalle | **Adaptamos**: 280 ms; la escala se interpola en logaritmo, la cuadrícula vieja se encoge y se desvanece, la nueva aparece, y los puntos se deslizan a su sitio | `transitions.zoom` |
-| Texto | Solo números de grupo (*Z*) o coordenadas (*GT*) | **Adaptamos**: tras un cambio de zoom se ve 1,2 s la escala ("1 km") debajo del marcador, con la misma fuente de trazos que los números. Desactivable. Sin coordenadas | `scaleLabel`, `font` |
+| Texto / números | Números junto a los puntos (*Z*) o coordenadas (*GT*) | **Adaptamos** los números: con `counts: "stars"` cada punto lleva el número de estrellas de su esfera (1-7, nunca repetido, porque cada esfera es única); un punto fundido muestra el de su esfera más cercana; `"none"` quita los números. Los tres temas usan `stars`. Tras un cambio de zoom se ve 1,2 s la escala ("1 km") debajo del marcador, con la misma fuente de trazos. Desactivable. Sin coordenadas | `themes.*.counts`, `scaleLabel`, `font` |
 | Encendido | Sin animación documentada | **Adaptamos** una secuencia de 1,5 s: la pantalla se enciende con dos parpadeos (0–240 ms), la cuadrícula se revela del centro hacia fuera (240–700), el marcador parpadea dos veces (700–940), un anillo de escaneo recorre la pantalla (940–1240) y aparecen las esferas (1240–1500) | `boot` |
-| Barrido | No existe | **No lo ponemos**; queda un interruptor explícito apagado | `sweep.enabled: false` |
+| Barrido | No existe en el original | **Adaptamos** a petición del usuario, con cuatro modos a elegir (por defecto `line`): `line`, una aguja que gira en sentido horario una vez cada 2,4 s, fija a la pantalla como la cuadrícula, con una estela de 75° que se desvanece (alfa 0,28 → 0) y la línea a alfa 0,55 en el color `sweep` del tema; al pasar sobre un punto lo enciende a brillo máximo (mismo ascenso y caída que el parpadeo) además del parpadeo del pitido. `ring`, una onda que crece del centro al borde en 520 ms con cada pitido y se desvanece. `both`, las dos. `none`, solo el parpadeo. Se dibuja encima de la cuadrícula y el reflejo, debajo de los puntos y el marcador, y nunca durante el encendido o el apagado. Se cambia desde la vista previa, la web (`POST /api/radar {sweep}`), el MCP y la consola (`sweep <modo>`) | `sweep`, `themes.*.sweep` |
 | Apagado | — | **Adaptamos**: las esferas se van en 120 ms y la pantalla funde a negro en 450 ms | `transitions.powerOff` |
-| Pitido | "Pi" electrónico agudo, ritmo sin documentar | **Reproducimos** un pip senoidal de 2400 Hz y 55 ms; **adaptamos** el ritmo a la distancia (ver abajo) | `sfx.radar_beep`, `beep` |
-| Sonidos de evento | La PROPLICA tiene sonido de arranque | **Adaptamos** arranque, clic de zoom (alejar más agudo, acercar más grave), esfera cerca (3 pips), esfera encontrada (4 notas que suben) y apagado | `sfx` |
+| Pitido | "pi-PI" medido en el anime: 80 ms a 2130 Hz y 60 ms a 4260 Hz, timbre casi triangular (8); ritmo sin documentar | **Reproducimos** el "pi-PI" con onda triangular (`~tri`), cuyo tercer armónico teórico (1/9 ≈ 0,11) queda cerca del medido (0,13); **adaptamos** el ritmo a la distancia (ver abajo) | `sfx.radar_beep`, `beep` |
+| Pulsación | En el anime, al pulsar el botón suena un "brrr" que tiembla antes del pitido (8) | **Reproducimos** el "brrr" (`button`: triangular que alterna 2000 y 2200 Hz cada 12 ms, 240 ms) y lo **extendemos** a toda pulsación: los dos botones y la pantalla (toque, deslizar para el tema, pulsación larga para fijar el norte, el gesto de la tarjeta de información, encender y apagar). Las pulsaciones de zoom tocan `zoom_out` / `zoom_in`, que ya empiezan con el mismo "brrr". Mientras suena, el pitido del radar espera; encender y apagar empiezan cuando termina | `sfx.button`, `sfx.zoom_*` |
+| Sonidos de evento | La PROPLICA tiene sonido de arranque; el anime abre con el mismo temblor (8) | **Adaptamos** con los mismos tonos del pitido: arranque (temblor 2000/2200 Hz y dos "pi-PI"), zoom ("brrr" y un blip: alejar con 4260 Hz, acercar con 2130 Hz), esfera cerca (3 "pi-PI" rápidos), esfera encontrada (4 notas que suben y un pip final) y apagado (barrido que baja) | `sfx` |
 | Tamaños | — | **Adaptamos**: todo relativo a R, así el firmware (R = 233 px) y la web dibujan lo mismo a cualquier tamaño | `refSizePx: 466` |
 
 ### Ritmo del pitido
@@ -102,11 +106,14 @@ t = clamp((log10(farM) − log10(d)) / (log10(farM) − log10(nearM)), 0, 1)
 intervalo = maxIntervalMs + (minIntervalMs − maxIntervalMs) · t^curvePow
 ```
 
-Con `nearM = 3`, `farM = 10000`, 120–1400 ms y `curvePow = 1`:
+Con `nearM = 3`, `farM = 10000`, 160–1400 ms y `curvePow = 1`:
 
 | Distancia | 3 m | 10 m | 30 m | 100 m | 300 m | 1 km | 3 km | ≥ 10 km |
 |---|---|---|---|---|---|---|---|---|
-| Un pitido cada | 120 ms | 310 ms | 483 ms | 673 ms | 847 ms | 1037 ms | 1210 ms | 1400 ms |
+| Un pitido cada | 160 ms | 344 ms | 512 ms | 696 ms | 864 ms | 1048 ms | 1216 ms | 1400 ms |
+
+El mínimo de 160 ms deja 20 ms de silencio tras el "pi-PI" de 140 ms, así que los pitidos no se
+pisan ni pegados a la esfera.
 
 La distancia es absoluta: hacer zoom no cambia el ritmo. Al bajar de 30 m suena `ball_close` una
 vez y al bajar de 3 m `ball_found`; cada aviso se rearma cuando la distancia vuelve a pasar del
@@ -115,21 +122,29 @@ umbral × 1,3. Los puntos destellan con cada pitido.
 ## Cómo se dibuja (para el firmware)
 
 Coordenadas en unidades de R con origen en el centro, x a la derecha, y hacia abajo; rumbos en
-sentido horario desde el norte. El orden de capas y las fórmulas son las de `index.html`:
+sentido horario desde el norte. El orden de capas y las fórmulas son las de `tools/preview/renderer.js`:
 
 1. Fondo `background` (negro) y recorte al círculo de radio R.
 2. Pantalla: degradado radial `screenCenter` (0) → `screen` (`midStop`) → `screenEdge` (1).
 3. Cuadrícula: líneas verticales y horizontales en `(k + offsetCells) · pitchR`, ancho
    `lineWidthR`, color `grid`. Durante el arranque se recorta a un círculo que crece.
 4. Reflejo: elipse con degradado de `sheen`, alfa `shading.sheen.alpha`.
-5. Esferas. Escala `s = pitchR / cellM` (R por metro). Para cada esfera, `rel = rumbo − heading`,
+5. Barrido (`sweep.mode`; nada durante el encendido ni el apagado). Aguja: ángulo
+   `θ = 360 · (t mod periodMs) / periodMs` desde arriba en sentido horario; estela de `trailDeg`
+   detrás, alfa de `trailAlpha` en la aguja a 0 al final; línea de ancho `lineWidthR` y alfa `alpha`.
+   Onda: con `e` = ms desde el último pitido, radio `maxR · e/durationMs` y alfa
+   `alpha · (1 − e/durationMs)` mientras `e < durationMs`. Color `sweep` del tema.
+6. Esferas. Escala `s = pitchR / cellM` (R por metro). Para cada esfera, `rel = rumbo − heading`,
    `r = d · s`, `x = sin(rel) · r`, `y = −cos(rel) · r`. Si `r > visibleR`, flecha en el borde; si
    no, se ordenan por distancia y cada una se une al primer grupo a menos de `mergeR` (el centroide
    se recalcula) o abre uno nuevo. Halo: alfa `glowAlpha · b · (1 − d/glowR)^glowFalloff`; núcleo
-   `mix(ballDim, ballCore, b)`; número a `(digitDxR, digitDyR)` del centro.
-6. Marcador encima de las esferas.
-7. Anillo de escaneo (solo en el arranque), etiqueta de escala, oscurecimiento del borde.
-8. Fundido a negro del arranque y del apagado.
+   `mix(ballDim, ballCore, b)`; con `counts: "stars"`, el número de estrellas de la esfera más
+   cercana del grupo a `(digitDxR, digitDyR)` del centro. Con la aguja y `dotFlash`, el brillo de
+   cada punto o flecha es `max(b, f(e))`, con `e` = ms desde que la aguja pasó por su ángulo y `f`
+   el ascenso y la caída del parpadeo sin suelo.
+7. Marcador encima de las esferas.
+8. Anillo de escaneo (solo en el arranque), etiqueta de escala, oscurecimiento del borde.
+9. Fundido a negro del arranque y del apagado.
 
 Brillo del parpadeo `b(e)`, con `e` = ms desde el último pitido: `dim + (1 − dim) · e/rise` mientras
 `e < rise`, y después `dim + (1 − dim) · exp(−(e − rise)/decay)`.
@@ -139,37 +154,48 @@ Transición de zoom con progreso `p = easeOutCubic(t / durationMs)`: escala
 `pitchR · s / sDesde` y alfa `1 − p`, la nueva con `pitchR · s / sHasta` y alfa `p`.
 
 La fuente de los números es de trazos (polilíneas sobre una caja de 4×6), así que escala sin
-mapas de bits y se dibuja igual en la web y en el panel.
+mapas de bits y se dibuja igual en la web y en el panel. El código de dibujo de la web y de la
+vista previa es el mismo, `tools/preview/renderer.js`, que `tools/preview/build.mjs` copia en las
+dos páginas.
 
 ## Sonidos
 
-Formato de melodía de `sound.h`: tonos `HZ:MS`, silencios `R:MS` y `~square` / `~sine` para la
-forma de onda; `gain` es el porcentaje del volumen del usuario. Se sintetizan como en el ES8311 de
-`sound.cpp`: onda cuadrada o senoidal sin filtrar, rampa de amplitud de 2 ms, nivel
-`0,915 · (volumen/100)²`. `tools/preview/render_wav.mjs` los escribe en `build/sounds/` a 24 kHz.
+Formato de melodía de `sound.h`: tonos `HZ:MS`, silencios `R:MS` y `~square` / `~sine` / `~tri`
+para la forma de onda; `gain` es el porcentaje del volumen del usuario. Se sintetizan como en el
+ES8311 de `sound.cpp`: onda cuadrada, senoidal o triangular sin filtrar, rampa de amplitud de 2 ms,
+nivel `0,915 · (volumen/100)²`. `tools/preview/render_wav.mjs` los escribe en `build/sounds/` a
+24 kHz. Los tonos salen del fragmento medido del anime (8): el "pi-PI" de 2130 + 4260 Hz y el
+temblor de 2000/2200 Hz del encendido y de las pulsaciones. En el WAV del pitido, el análisis espectral da picos en
+2130 Hz y 4260 Hz, y un tercer armónico de 0,11 en el "pi" (el de una triangular ideal); en el de
+`button`, el pico de cada tramo de 12 ms alterna 2000 y 2200 Hz los 20 tramos.
 
 | Sonido | Notas | Duración |
 |---|---|---|
-| `power_on` | barrido cuadrado 600 → 1700 Hz (12 × 20 ms), pip a 2400 Hz en 700 ms (aparece el marcador), pip doble 2400/3200 Hz en 940 ms (anillo de escaneo) | 1070 ms |
-| `radar_beep` | seno 2400 Hz, 55 ms | 55 ms |
-| `zoom_out` / `zoom_in` | clic cuadrado 3600 Hz de 5 ms y blip senoidal de 1900 / 1400 Hz | 52 ms |
-| `ball_close` | tres pips de 2400 Hz | 205 ms |
-| `ball_found` | 1568, 2093, 2637 y 3136 Hz (sol-do-mi-sol) | 435 ms |
-| `power_off` | barrido cuadrado 1800 → 380 Hz | 280 ms |
+| `power_on` | triangular: temblor 2000/2200 Hz (28 × 12 ms), silencio, "pi-PI" en 700 ms (aparece el marcador) y otro en 940 ms (anillo de escaneo) | 1080 ms |
+| `radar_beep` | triangular: "pi-PI", 2130 Hz 80 ms + 4260 Hz 60 ms | 140 ms |
+| `button` | triangular: el "brrr", 2000 / 2200 Hz alternos cada 12 ms (20 tramos); suena con cada pulsación | 240 ms |
+| `zoom_out` / `zoom_in` | triangular: el "brrr" corto (14 tramos de 12 ms), 20 ms de silencio y un blip de 40 ms a 4260 / 2130 Hz | 228 ms |
+| `ball_close` | triangular: tres "pi-PI" cortos (40 + 30 ms) separados 30 ms | 270 ms |
+| `ball_found` | triangular: 1568, 2093, 2637 y 3136 Hz (sol-do-mi-sol) y un pip final de 4260 Hz | 495 ms |
+| `power_off` | triangular: barrido 2200 → 500 Hz | 260 ms |
 
 ## Vista previa
 
 `tools/preview/index.html` se abre con `file://`, sin servidor. `node tools/preview/build.mjs`
 incrusta los dos JSON (con `--check` comprueba que están al día). Tiene las siete esferas de
-ejemplo, los niveles de zoom (perilla, clic en la pantalla, `Espacio`/`↑`, `↓`), el arranque, el
+ejemplo, las entradas del dispositivo con su sonido (BOOT: alejar, mantener para la tarjeta de
+información; KEY2: acercar, mantener para encender o apagar; en la pantalla, tocar para alejar,
+deslizar para el tema y pulsación larga para fijar el norte), botones para oír cada sonido, el arranque, el
 parpadeo, el pitido con WebAudio, un deslizador de rumbo que simula el giroscopio y otro que
-acerca o aleja todas las esferas para oír cómo cambia el ritmo. `node tools/preview/render.mjs`
-saca las capturas de `build/preview/` con Chrome sin interfaz.
+acerca o aleja todas las esferas para oír cómo cambia el ritmo, y un selector de barrido (aguja,
+onda, las dos o ninguno). `node tools/preview/render.mjs` saca las capturas de `build/preview/` con
+Chrome sin interfaz, una por modo de barrido (`sweep_*.png`) y una hoja con las cuatro
+(`sweep_sheet.png`).
 
 ## Pendiente
 
-- La frecuencia y el timbre exactos del pitido del anime no están documentados; se eligieron de
-  oído. Si aparece una referencia mejor, se cambia en `sounds.json`.
+- El pitido y el "brrr" salen de un único fragmento medido (8); el ritmo que sigue a la distancia
+  sigue siendo una adaptación.
 - `sounds.h` no lleva la ganancia por sonido: está en `RADAR_SFX_GAIN` de `radar_assets.h` y el
   firmware tiene que aplicarla al llamar a `soundPlaySfx`.
 - Las esferas de ejemplo son fijas. De dónde salen las esferas reales (GPS, balizas BLE, juego) se
